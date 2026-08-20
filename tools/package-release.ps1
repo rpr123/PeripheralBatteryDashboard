@@ -38,7 +38,11 @@ $requiredFiles = @(
     'DEVICE-ADDING.md',
     'THIRD-PARTY-NOTICES.md',
     'LICENSE',
-    'Profiles\builtin.devices.json'
+    'Plugins\README.md',
+    'Plugins\SamplePlugin.cs.txt',
+    'Profiles\builtin.devices.json',
+    'docs\images\dashboard-overview.png',
+    'docs\images\tray-device-icons.png'
 )
 foreach ($name in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $inputRoot $name))) {

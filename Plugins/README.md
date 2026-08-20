@@ -16,8 +16,8 @@ Plugins\Vendor.Device\vendor-device.devices.json
 Plugins\Vendor.Device\README.md
 ```
 
-플러그인은 반드시 현재 배포본의 `PeripheralBatteryDashboard.Runtime.dll`을 참조해 빌드하세요. `PeripheralBatteryDashboard.exe` 또는 `PeripheralBatteryDashboard.Diagnostics.exe`를 참조하지 마세요. 두 실행 파일은 진입점만 담고 있으며, 공용 API의 타입 ID는 Runtime DLL에 있습니다.
+에이전트는 반드시 현재 검증 대상 배포본의 `PeripheralBatteryDashboard.Runtime.dll`만 참조해 플러그인을 격리된 출력 폴더에 빌드합니다. `PeripheralBatteryDashboard.exe` 또는 `PeripheralBatteryDashboard.Diagnostics.exe`를 참조하지 않습니다. 두 실행 파일은 진입점만 담고 있으며, 공용 API의 타입 ID는 Runtime DLL에 있습니다.
 
-`SamplePlugin.cs.txt`는 로딩 가능한 최소 골격입니다. 안전을 위해 실제 HID 명령은 보내지 않으며, 장치 프로토콜을 확인한 개발자가 `ReadAsync`를 구현해야 합니다. 플러그인과 프로필을 추가한 뒤 앱을 완전히 종료하고 다시 실행하세요.
+`SamplePlugin.cs.txt`는 로딩 가능한 최소 골격입니다. 안전을 위해 실제 HID 명령은 보내지 않으며, 장치 프로토콜을 확인한 에이전트가 `ReadAsync`를 구현하고 모의 응답 테스트·Release 빌드·`--self-test`를 먼저 통과시켜야 합니다. 플러그인과 프로필의 대상 경로·파일·영향을 보여 주고 승인을 받은 뒤 에이전트가 배치합니다. 앱 재시작이 exact-match 공급자의 실제 장치 요청을 시작할 수 있음을 설명하고 별도 확인을 받은 경우에만 재시작합니다.
 
-주의: DLL은 앱 프로세스 안에서 현재 사용자 권한으로 실행됩니다. 출처를 신뢰하고 코드를 검토할 수 있는 플러그인만 넣으세요. 인터넷에서 받은 DLL은 Windows 파일 속성의 차단 여부도 확인하세요.
+주의: DLL은 앱 프로세스 안에서 현재 사용자 권한으로 실행됩니다. 에이전트는 소스·배포자·해시를 검토할 수 있는 플러그인만 제안하고 변경 내용을 보여 준 뒤 사용자 승인을 받아 배치합니다. 검토되지 않은 인터넷 DLL은 차단을 해제하거나 로드하지 않습니다.

@@ -1,6 +1,6 @@
 # Codex 작업 프롬프트
 
-이 문서는 Peripheral Battery Dashboard의 설치·업데이트·제거와 기기별 조정을 로컬 Codex 또는 다른 코딩 에이전트에 맡길 때 전달하는 프롬프트 모음입니다. 사용자가 저장소 복제, ZIP 해제, 빌드와 설치 파일 배치를 직접 수행하는 흐름은 전제하지 않습니다.
+이 문서는 Peripheral Battery Dashboard의 설치·업데이트와 기기별 조정을 로컬 Codex 또는 다른 코딩 에이전트에 맡길 때 전달하는 프롬프트 모음입니다. 사용자가 저장소 복제, ZIP 해제, 빌드와 설치 파일 배치를 직접 수행하는 흐름은 전제하지 않습니다.
 
 공식 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
@@ -22,15 +22,15 @@ Peripheral Battery Dashboard를 내 Windows PC에 안전하게 설치하고 내 
 
 대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
-대상 저장소가 로컬에 없으면 정확한 복제 위치와 네트워크·파일 변경을 설명하고 내 승인을 받은 뒤 복제한다. 이미 로컬에 있으면 origin URL과 Git 상태를 확인하고 사용자 변경을 보존한다. 저장소를 확보한 다음 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 모두 읽어라. 이후 다음을 지켜라.
-
-- 시작할 때는 읽기 전용으로 Git 상태, Windows 10/11 x64 여부, .NET Framework 4.8, 필요한 VS 2022 Build Tools를 확인하고 실행 계획을 요약한다.
-- 공식 Release 배포본과 소스 빌드 중 검증 가능한 방법을 선택한다. Release를 받으면 공식 자산의 SHA-256을 `SHA256SUMS.txt`와 비교하고 불일치하면 압축 해제·실행을 중단한다. 다운로드나 소프트웨어 설치, 저장소 밖의 안정된 앱 폴더 쓰기, 레지스트리 및 자동 실행 변경 전에 정확한 대상과 영향을 설명하고 내 승인을 받는다. 관리자 권한을 요구하지 않는다. GUI 첫 실행은 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PeripheralBatteryDashboard` 자동 실행 값과 실행 명령을 설명하고 별도 승인 후 수행하며, 미승인 상태에서는 GUI와 레지스트리를 변경하지 않는다.
-- 빌드한다면 별도 출력 폴더를 쓰고 PeripheralBatteryDashboard.Diagnostics.exe --self-test를 실행한다.
-- 내 장치를 확인할 때 앱의 redacted --diagnostics를 우선 사용하되, --diagnostics와 --snapshot은 매칭된 기존 공급자의 검증된 배터리 요청을 실제 장치에 보낼 수 있음을 먼저 설명한다. 장치 시리얼, 전체 장치 경로, 사용자명, Bluetooth 주소, 토큰을 출력·업로드·커밋하지 않는다.
-- 알 수 없는 HID interrupt/output/Feature write, 무작위 바이트, 명령 스캔이나 퍼징은 절대 사용하지 않는다. 검증된 읽기 전용 배터리 요청만 허용한다.
-- 내 기기가 현재 지원되지 않으면 억지로 값을 추정하지 말고, JSON 프로필만 필요한지 새 공급자 플러그인이 필요한지 근거와 함께 분류한다.
-- 완료 시 저장소 획득 방식과 commit 또는 Release SHA-256, 설치 위치, 관리자 권한 사용 여부, 변경 파일, 빌드와 --self-test 종료 코드, 자동 실행 승인과 실제 레지스트리 결과, live diagnostics 실행 여부와 ProviderId, 새 HID write 전송 여부, 실제로 확인한 기기, 남은 제약과 다음 승인 단계를 보고한다. 내 요청 없이 커밋·푸시·GitHub 릴리스를 하지 않는다.
+1. 먼저 읽기 전용으로 Windows 10/11 x64 여부, .NET Framework 4.8, Git과 VS 2022 Build Tools 유무, 기존 설치 위치와 후보 설치 경로를 확인하고 계획을 요약한다. 앱 실행과 현재 사용자용 Release 설치에는 관리자 권한이 필요하지 않다. 누락된 Microsoft 런타임이나 빌드 도구가 권한 상승을 요구하면 별도 승인 없이 설치하지 말고 Release 경로 또는 `설치 보류(blocked)`를 선택한다.
+2. 기존 프로젝트 폴더가 있으면 origin URL이 위 공식 URL과 같은지, HEAD와 dirty 상태를 읽기 전용으로 확인하고 사용자 변경을 보존한다. origin이 다르면 그 복사본을 실행하지 않는다. 공식 로컬 복사본이 없으면 공식 Release ZIP과 SHA 파일을 받을지, 위 URL을 `git clone`할지 판단하고 정확한 URL·대상 경로·생길 파일을 보여 준 뒤 네트워크와 쓰기에 대한 승인을 기다린다.
+3. clone을 선택하면 origin과 HEAD를 확인한 뒤 저장소 문서를 읽는다. Release를 선택하면 공식 ZIP과 `SHA256SUMS.txt`를 받고, 압축 해제나 실행 전에 SHA-256을 정확히 비교한다. 불일치하면 즉시 중단한다. 일치하면 압축을 해제한 뒤 포함된 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 읽는다. SmartScreen이나 보안 경고를 임의로 우회하지 않는다.
+4. 검증된 배포본과 소스 빌드 중 적합한 방법을 선택한다. 빌드한다면 격리된 출력 폴더를 사용한다. 다운로드, 빌드 도구·런타임 설치, 저장소 밖의 안정된 앱 폴더 쓰기 등 외부 상태 변경 전에 정확한 대상과 영향을 설명하고 내 승인을 받는다.
+5. 설치 후 실제 장치 I/O가 없는 `PeripheralBatteryDashboard.Diagnostics.exe --self-test`를 먼저 실행하고 종료 코드를 확인한다.
+6. GUI 첫 실행 전에 자동 실행을 켤지 끌지 묻는다. 끄기를 선택하면 전체 설정 파일과 `StartWithWindows=false` 쓰기를 설명하고 승인 후 먼저 준비한다. 켜기를 선택하면 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PeripheralBatteryDashboard` 값과 정확한 실행 명령을 보여 준다. GUI는 이 레지스트리 상태를 동기화하고 모니터를 시작해 exact-match 기존 공급자의 장치 요청을 보낼 수 있음을 함께 설명한 뒤 첫 실행에 대한 별도 승인을 기다린다. 승인이 없으면 GUI 실행과 관련 파일·레지스트리 변경을 보류한다.
+7. `--diagnostics`와 `--snapshot`은 매칭된 기존 ProviderId의 검증된 배터리 요청을 실제 장치에 보낼 수 있다. 실행 전에 대상 ProviderId, 장치 매칭과 수행될 I/O를 설명하고 내 명시적 확인을 기다린다. 장치 시리얼, 전체 장치 경로, Bluetooth 주소, 사용자명, 토큰은 출력·업로드·커밋하지 않는다.
+8. 내 기기가 현재 지원되지 않으면 값을 추정하지 말고 JSON 프로필만 필요한지 새 공급자 플러그인이 필요한지 근거와 함께 분류한다. 알 수 없는 HID interrupt/output/Feature write, 무작위 바이트, 명령 공간 스캔·퍼징, 펌웨어·페어링·DPI·키맵·온보드 설정 변경은 절대 사용하지 않는다. 근거 없는 새 프로토콜은 `지원 보류(blocked)`로 보고하고, 검증된 새 요청도 정확한 대상·전송 바이트·읽기 전용 근거를 보여 준 뒤 별도 승인을 받는다.
+9. 최종 보고에는 공식 소스 획득 방법과 origin/commit 또는 Release SHA-256, 설치 위치, 관리자 권한 사용 여부, 변경 파일, 빌드와 --self-test 종료 코드, 자동 실행 선택·승인과 실제 파일/레지스트리 상태, 실기기 I/O 여부와 ProviderId, 새 HID write 전송 여부, 실제 확인한 기기와 남은 제약을 포함한다. 내 요청 없이 GitHub 게시, 커밋, 푸시 또는 릴리스를 하지 않는다.
 
 내 기기:
 - 제품명: [제품명]
@@ -45,7 +45,9 @@ Peripheral Battery Dashboard를 내 Windows PC에 안전하게 설치하고 내 
 
 대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
-먼저 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 읽어라. Git 상태와 앱 버전을 확인하고 장치 I/O가 없는 --self-test를 먼저 실행한다. --diagnostics와 --snapshot은 매칭된 기존 공급자의 검증된 요청을 실제 장치에 보낼 수 있으므로 수동 파일 검사처럼 표현하지 말고, 실행 전에 대상 ProviderId와 동작을 알린 뒤 필요한 경우에만 사용한다. 제조사 프로그램의 장치 독점, 절전, 연결 방식, VID/PID, 인터페이스와 Usage, 선택된 ProviderId를 점검하되 장치 시리얼과 전체 경로, 사용자명, Bluetooth 주소 같은 식별 정보는 결과에 노출하지 마라.
+기존 설치 폴더와 포함 문서 또는 위 공식 origin의 로컬 저장소가 없으면 이번 진단 요청에서는 다운로드·복제하지 말고 `진단 보류(blocked)`로 끝낸 뒤 1번 설치 프롬프트를 안내한다.
+
+먼저 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 읽어라. Git 상태와 앱 버전을 확인하고 장치 I/O가 없는 --self-test를 먼저 실행한다. 이번 진단 요청에서는 GUI를 실행하거나 재시작하지 않는다. --diagnostics와 --snapshot은 매칭된 기존 공급자의 검증된 요청을 실제 장치에 보낼 수 있으므로 수동 파일 검사처럼 표현하지 말고, 실행 전에 대상 ProviderId·장치 매칭·수행될 I/O를 설명한 뒤 내 명시적 확인을 기다린다. 확인을 받았고 필요한 경우에만 사용한다. 제조사 프로그램의 장치 독점, 절전, 연결 방식, VID/PID, 인터페이스와 Usage, 선택된 ProviderId를 점검하되 장치 시리얼과 전체 경로, 사용자명, Bluetooth 주소 같은 식별 정보는 결과에 노출하지 마라.
 
 어떤 새 HID 명령도 보내지 말고 퍼징·명령 스캔·설정 변경도 하지 마라. 확인된 사실, 가능한 원인, 추가로 필요한 안전한 증거, 권장 수정안을 구분해서 보고하고 실제 수정은 내 승인을 기다려라.
 
@@ -65,11 +67,15 @@ Peripheral Battery Dashboard를 내 Windows PC에 안전하게 설치하고 내 
 
 대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
-먼저 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md와 현재 builtin.devices.json 및 해당 공급자 코드를 읽어라. 근거가 충분한지 검토하고, VID/PID뿐 아니라 인터페이스 번호, Usage Page, Usage를 redacted diagnostics로 확인한다. 근거가 부족하면 어떤 장치 명령도 보내지 말고 중단한다.
+먼저 읽기 전용으로 Windows 10/11 x64 여부, .NET Framework 4.8, Git과 VS 2022 Build Tools 유무를 확인한다. 기존 로컬 저장소가 있으면 origin이 위 공식 URL과 같은지, HEAD와 dirty 상태를 확인하고 사용자 변경을 보존한다. 없으면 Git이 있을 때만 정확한 복제 위치와 네트워크·파일 변경을 설명하고 내 승인을 기다린 뒤 위 URL을 clone한다. 누락된 도구를 자동 설치하거나 권한을 상승하지 말고, 설치가 꼭 필요하면 정확한 출처·대상·영향을 설명해 별도 승인을 기다린다. 승인받지 못했거나 현재 사용자 권한으로 안전하게 진행할 수 없으면 `지원 보류(blocked)`로 끝낸다. origin이 다르면 그 복사본을 사용하지 않는다.
 
-로컬 한 대만을 위한 변경이면 기본 프로필을 수정하지 말고 완전한 사용자 JSON 프로필을 만들어 가져오는 방법을 제시한다. 내가 명시적으로 업스트림 소스 반영을 요청한 경우에만 최소 범위로 기본 프로필과 테스트/문서를 수정한다. 매칭 범위를 넓히거나 와일드카드로 다른 장치까지 잡지 마라.
+먼저 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md와 현재 builtin.devices.json 및 해당 공급자 코드를 읽어라. 근거가 충분한지 검토한다. VID/PID뿐 아니라 인터페이스 번호, Usage Page, Usage를 redacted diagnostics로 확인할 필요가 있으면 아래 실기기 I/O 승인 절차를 먼저 따른다. 근거가 부족하면 어떤 장치 명령도 보내지 말고 중단한다.
 
-장치 I/O가 없는 빌드와 --self-test를 실행한다. --diagnostics와 --snapshot은 기존 공급자의 검증된 요청을 실제 장치에 보낼 수 있으므로 수동 파일 검사처럼 설명하지 말고, 대상 공급자와 동작을 알린 뒤 사용한다. 가능하면 사용자가 승인한 실제 장치 판독을 기존 공급자와 비교한다. 장치 시리얼과 전체 경로를 기록하거나 커밋하지 않는다. 변경 내용과 검증 범위를 보고하고 내 요청 없이 커밋·푸시·배포하지 않는다.
+로컬 한 대만을 위한 변경이면 기본 프로필을 수정하지 말고 완전한 사용자 JSON 프로필을 만든다. 전체 JSON과 적용 위치·기존 파일 보존 방식·변경 내용을 보여 주고 내 승인을 받은 뒤 에이전트가 사용자 프로필 폴더에 적용한다. GUI 가져오기는 아래 GUI 실행 승인 절차를 완료한 경우에만 대신 사용할 수 있다. 내가 명시적으로 업스트림 소스 반영을 요청한 경우에만 최소 범위로 기본 프로필과 테스트/문서를 수정한다. 매칭 범위를 넓히거나 와일드카드로 다른 장치까지 잡지 마라.
+
+장치 I/O가 없는 빌드와 --self-test를 실행한다. --diagnostics와 --snapshot은 기존 공급자의 검증된 요청을 실제 장치에 보낼 수 있으므로 수동 파일 검사처럼 설명하지 말고, 대상 ProviderId·장치 매칭·수행될 I/O를 설명한 뒤 내 명시적 확인을 기다린다. 확인을 받은 경우에만 실제 장치 판독을 기존 공급자와 비교한다. 장치 시리얼과 전체 경로를 기록하거나 커밋하지 않는다. 변경 내용과 검증 범위를 보고하고 내 요청 없이 커밋·푸시·배포하지 않는다.
+
+프로필 적용 때문에 GUI를 실행하거나 재시작해야 하면 자동 실행 선택, 전체 settings 파일 또는 HKCU Run 변경, 모니터 시작과 exact-match 공급자의 실기기 I/O를 먼저 설명하고 별도 확인을 기다린다. 승인 없이는 GUI를 실행·재시작하지 않고 적용 검증을 보류한다.
 
 새 기기 정보:
 - 제품명/리비전: [값]
@@ -85,15 +91,18 @@ Peripheral Battery Dashboard를 내 Windows PC에 안전하게 설치하고 내 
 
 대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
+먼저 읽기 전용으로 Windows 10/11 x64 여부, .NET Framework 4.8, Git과 VS 2022 Build Tools 유무를 확인한다. 기존 로컬 저장소가 있으면 origin이 위 공식 URL과 같은지, HEAD와 dirty 상태를 확인하고 사용자 변경을 보존한다. 없으면 Git이 있을 때만 정확한 복제 위치와 네트워크·파일 변경을 설명하고 내 승인을 기다린 뒤 위 URL을 clone한다. 누락된 도구를 자동 설치하거나 권한을 상승하지 말고, 설치가 꼭 필요하면 정확한 출처·대상·영향을 설명해 별도 승인을 기다린다. 승인받지 못했거나 현재 사용자 권한으로 안전하게 진행할 수 없으면 `지원 보류(blocked)`로 끝낸다. origin이 다르면 그 복사본을 사용하지 않는다.
+
 작업 전에 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md, Plugins/README.md, Plugins/SamplePlugin.cs.txt와 기존 공급자 구조를 모두 읽어라.
 
-1. 먼저 장치 I/O가 없는 --self-test와 현재 프로필/소스를 확인한다. redacted --diagnostics는 매칭된 기존 공급자의 검증된 상태 요청을 실제 장치에 보낼 수 있으므로 그 대상과 동작을 먼저 설명한 뒤, 필요한 경우에만 VID/PID, 인터페이스, Usage Page/Usage, 보고서 길이 확인에 사용한다. 장치 시리얼, 전체 경로, 사용자명, Bluetooth 주소는 출력·파일·커밋에서 제거한다.
+1. 먼저 장치 I/O가 없는 --self-test와 현재 프로필/소스를 확인한다. redacted --diagnostics는 매칭된 기존 공급자의 검증된 상태 요청을 실제 장치에 보낼 수 있으므로 대상 ProviderId·장치 매칭·수행될 I/O를 설명한 뒤 내 명시적 확인을 기다린다. 확인을 받았고 필요한 경우에만 VID/PID, 인터페이스, Usage Page/Usage, 보고서 길이 확인에 사용한다. 장치 시리얼, 전체 경로, 사용자명, Bluetooth 주소는 출력·파일·커밋에서 제거한다.
 2. 제조사 문서, 사용자가 제공한 수동 캡처, 또는 검토 가능한 기기별 기존 구현에서 읽기 전용 배터리 요청과 응답 형식을 찾는다. 출처와 적용되는 정확한 하드웨어 리비전을 명시한다.
 3. 증거가 없다면 알 수 없는 HID interrupt/output/Feature write, 무작위 바이트, 명령 공간 스캔/퍼징 또는 다른 모델의 명령 재사용을 절대 하지 않는다. 구현하지 말고 `지원 보류(blocked)`로 판정한 뒤 안전하게 필요한 증거와 수집 방법을 구체적으로 보고한다. 이는 실패가 아니라 올바른 완료 결과다.
 4. 증거가 충분하면 VID/PID·인터페이스·Usage를 좁게 제한한 독립 플러그인과 프로필을 만든다. 요청 길이와 타입, 응답 ID·헤더·길이·체크섬·0~100 범위, timeout과 cancellation, 자원 해제를 모두 검증한다. 기존 공급자를 임의로 일반화하지 않는다.
 5. 새 명령의 첫 실제 장치 실행 전에 정확한 VID/PID, 인터페이스(MI), Usage Page/Usage, 보고서 타입과 길이, 전송 바이트, 읽기 전용 근거, 예상 응답, 실패 시 영향과 복구 방법을 보여 주고 별도 승인을 받는다. 펌웨어·페어링·DPI·키맵·조명·온보드 설정을 바꾸는 명령은 사용하지 않는다.
 6. 모의 응답 테스트, Release 빌드와 --self-test를 먼저 통과시킨다. 승인된 실제 판독은 한정적으로 수행하고 제조사 표시나 알려진 배터리 상태와 비교한다.
-7. 변경 파일, 증거, 테스트 결과, 실제 검증 범위, 남은 위험을 보고한다. 내 요청 없이 DLL을 인터넷에서 내려받아 실행하거나 커밋·푸시·릴리스하지 않는다.
+7. 플러그인 적용 때문에 GUI를 실행하거나 재시작해야 하면 자동 실행 선택, 전체 settings 파일 또는 HKCU Run 변경, 모니터 시작과 새 exact-match 공급자의 실기기 I/O를 먼저 설명하고 별도 확인을 기다린다. 승인 없이는 GUI를 실행·재시작하지 않고 적용 검증을 보류한다.
+8. 변경 파일, 증거, 테스트 결과, 실제 검증 범위, 남은 위험을 보고한다. 내 요청 없이 DLL을 인터넷에서 내려받아 실행하거나 커밋·푸시·릴리스하지 않는다.
 
 기기 정보:
 - 제품명과 정확한 리비전: [값]

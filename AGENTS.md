@@ -32,9 +32,9 @@ Start with read-only inspection. Check the working tree and preserve unrelated u
 - Existing exact match: diagnose before editing anything.
 - Verified use of an existing battery protocol: add or update a JSON profile.
 - Different request, response, report type or checksum: implement a separate `IBatteryProvider` only when supported by reliable protocol evidence.
-- Unknown protocol without adequate evidence: collect redacted diagnostics, explain what evidence is missing and stop before device I/O experimentation.
+- Unknown protocol without adequate evidence: use already provided redacted diagnostics, or collect new redacted diagnostics only after the approval boundary below has been completed; explain what evidence is missing and stop before device I/O experimentation.
 
-For a local one-user adjustment, prefer a complete user profile under `%LOCALAPPDATA%\PeripheralBatteryDashboard\Profiles` or the GUI profile importer. Change `Profiles/builtin.devices.json` only when the user explicitly requests an upstream repository change and the hardware match has been validated.
+For a local one-user adjustment, prefer a complete user profile under `%LOCALAPPDATA%\PeripheralBatteryDashboard\Profiles` after disclosing and obtaining approval for the exact file write. Use the GUI profile importer only after the GUI startup/device-I/O approval below. Change `Profiles/builtin.devices.json` only when the user explicitly requests an upstream repository change and the hardware match has been validated.
 
 ## Non-negotiable HID safety rules
 
@@ -58,13 +58,15 @@ Read-only repository and system inspection is allowed when it is relevant to the
 - installing or downloading build tools, drivers, vendor applications or other software;
 - changing the registry, Windows startup behavior, services, scheduled tasks or security settings;
 - writing outside the repository or the app's documented user-profile folder;
-- running the GUI for the first time when that may enable its default per-user auto-start entry;
+- running or restarting the GUI when it may create or change its per-user auto-start entry, load a newly placed profile or plugin, or start exact-match provider I/O;
 - sending any device request not already present and validated in the checked-in provider for that exact hardware match;
 - committing, pushing, opening a pull request, publishing artifacts or creating a release.
 
 Do not interpret a request to diagnose or adapt a device as authorization to publish changes.
 
-`--self-test` validates application structure without querying connected hardware. In contrast, `--diagnostics` and `--snapshot` can invoke a matched existing provider and send its already validated battery/status request to a real device. Describe that behavior and the exact matched provider before using those commands; never present them as passive file inspection.
+Before the first GUI run, ask whether per-user auto-start should be enabled. Explain the complete settings file or HKCU Run value that will be written, and that the monitor starts immediately and can invoke exact-match existing providers. Obtain separate approval for the settings/registry change and the first GUI/device-I/O execution. If auto-start is declined, prepare a complete `StartWithWindows=false` settings file only after approval; if the user does not approve the required write or GUI run, leave that step pending. Apply the same disclosure and approval before restarting the GUI to load a newly placed profile or plugin.
+
+`--self-test` validates application structure without querying connected hardware. In contrast, `--diagnostics` and `--snapshot` can invoke a matched existing provider and send its already validated battery/status request to a real device. Describe that behavior and the exact matched provider, then wait for the user's explicit confirmation before using those commands; never present them as passive file inspection.
 
 Before the first real-device execution of any newly implemented command, show the user the exact VID, PID, interface number, Usage Page/Usage, report type and length, transmitted bytes, read-only evidence, expected response, and failure impact. Obtain separate approval for that execution. When the evidence is insufficient, `blocked` support plus a precise list of required evidence is a successful and preferred outcome.
 
@@ -90,11 +92,11 @@ Before the first real-device execution of any newly implemented command, show th
 Use an isolated output directory when practical so existing artifacts and a running installed copy are not overwritten:
 
 ```powershell
-PowerShell -ExecutionPolicy Bypass -File .\build.ps1 -Configuration Release -OutputDirectory dist-agent-check
+PowerShell -NoProfile -File .\build.ps1 -Configuration Release -OutputDirectory dist-agent-check
 .\dist-agent-check\PeripheralBatteryDashboard.Diagnostics.exe --self-test
 ```
 
-When hardware is present and the user requested a live check, run redacted diagnostics and manually compare the reading with known device state. Do not infer protocol correctness from compilation or one plausible percentage alone.
+When hardware is present and the user requested a live check, first describe the exact matched ProviderId and device I/O and wait for the user's explicit confirmation as required above. Only then run redacted diagnostics and manually compare the reading with known device state. Do not infer protocol correctness from compilation or one plausible percentage alone.
 
 Before finishing:
 
