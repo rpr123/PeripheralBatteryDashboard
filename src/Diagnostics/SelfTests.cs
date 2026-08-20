@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using PeripheralBatteryDashboard.Core;
 using PeripheralBatteryDashboard.Hardware;
@@ -56,6 +59,20 @@ namespace PeripheralBatteryDashboard.Diagnostics
             Check(failures, ProviderSupport.IsValidBatteryPercent(0), "battery percent lower bound");
             Check(failures, ProviderSupport.IsValidBatteryPercent(100), "battery percent upper bound");
             Check(failures, !ProviderSupport.IsValidBatteryPercent(101), "battery percent rejects overflow");
+            DeviceProfile workerRoundTripProfile = WorkerProfile(
+                "fixture.한글-profile", "test.worker");
+            workerRoundTripProfile.ProviderOptions["한글-option"] = "값";
+            string workerRequestId = Guid.NewGuid().ToString("N");
+            ProviderWorkerRequest workerRoundTripRequest;
+            string workerRequest = ProviderWorkerProtocol.SerializeRequest(
+                workerRequestId, workerRoundTripProfile);
+            Check(failures, ProviderWorkerProtocol.TryDeserializeRequest(
+                    workerRequest, out workerRoundTripRequest) &&
+                    workerRoundTripRequest.RequestId == workerRequestId &&
+                    workerRoundTripRequest.Profile.Id == workerRoundTripProfile.Id &&
+                    Convert.ToString(workerRoundTripRequest.Profile.ProviderOptions[
+                        "한글-option"]) == "값",
+                "provider worker profile snapshot round trip");
             Check(failures, typeof(HidSession).GetMethod("OpenReadOnly",
                 BindingFlags.Public | BindingFlags.Static) != null,
                 "read-only HID session entry point");
@@ -88,6 +105,17 @@ namespace PeripheralBatteryDashboard.Diagnostics
                         bluetoothPath.ToLowerInvariant()),
                     StringComparison.Ordinal),
                 "Bluetooth local service identity is path-case stable");
+            string refreshMutexName =
+                BluetoothGattBatteryReader.BuildDeviceRefreshMutexName(bluetoothPath);
+            Check(failures,
+                string.Equals(refreshMutexName,
+                    BluetoothGattBatteryReader.BuildDeviceRefreshMutexName(
+                        bluetoothPath.ToLowerInvariant()), StringComparison.Ordinal) &&
+                refreshMutexName.StartsWith(
+                    @"Local\PeripheralBatteryDashboard.GattRefresh.",
+                    StringComparison.Ordinal) &&
+                refreshMutexName.IndexOf("BTHLEDevice", StringComparison.OrdinalIgnoreCase) < 0,
+                "Bluetooth refresh mutex is cross-process, stable, and path-redacted");
             Check(failures, BluetoothGattBatteryReader.CandidateMatches(bluetoothPath,
                     "Xbox Wireless Controller", "Xbox", 0x045E,
                     new List<ushort> { 0x0B13 }, null) &&
@@ -201,6 +229,16 @@ namespace PeripheralBatteryDashboard.Diagnostics
                     DeviceConnectionState.Disconnected, DevicePresenceState.Present) ==
                     DevicePresenceState.Absent,
                 "non-HID presence follows live connection state");
+            DeviceProfile unknownProbeProfile = WorkerProfile(
+                "presence.unknown-probe", "test.worker");
+            Check(failures,
+                !DeviceMonitorService.CanProbeUnknownHid(unknownProbeProfile,
+                    DevicePresenceState.Unknown, true, true, false) &&
+                DeviceMonitorService.CanProbeUnknownHid(unknownProbeProfile,
+                    DevicePresenceState.Unknown, true, true, true) &&
+                DeviceMonitorService.CanProbeUnknownHid(unknownProbeProfile,
+                    DevicePresenceState.Unknown, true, false, false),
+                "exact HID worker probes only after presence becomes inconclusive");
             BatteryReading presentButUnreadable = new BatteryReading
             {
                 Presence = DevicePresenceState.Present,
@@ -214,8 +252,567 @@ namespace PeripheralBatteryDashboard.Diagnostics
             try { registry.Register(new SteelSeriesNova7Provider()); }
             catch (InvalidOperationException) { duplicateRejected = true; }
             Check(failures, duplicateRejected, "duplicate provider rejection");
+            CheckMonitorIsolation(failures);
+            CheckProviderWorkerIsolation(failures, baseDirectory);
 
             return failures;
+        }
+
+        private static void CheckProviderWorkerIsolation(List<string> failures,
+            string baseDirectory)
+        {
+            ProviderWorkerClient client = new ProviderWorkerClient(baseDirectory,
+                "--provider-worker-fixture");
+            DeviceProfile successProfile = WorkerProfile("fixture.한글-success",
+                "test.worker");
+            BatteryReading success = client.ReadAsync(successProfile,
+                    CancellationToken.None).GetAwaiter().GetResult();
+            Check(failures, success.Connection == DeviceConnectionState.Connected &&
+                    success.Percent == 61 && success.ProfileId == successProfile.Id &&
+                    success.DisplayName == successProfile.DisplayName,
+                "provider worker returns a validated battery reading");
+
+            DeviceProfile malformedProfile = WorkerProfile("fixture.malformed",
+                "test.worker");
+            BatteryReading malformed = client.ReadAsync(malformedProfile,
+                    CancellationToken.None).GetAwaiter().GetResult();
+            Check(failures, malformed.Connection == DeviceConnectionState.Error &&
+                    malformed.ErrorCode == "provider-worker-output-invalid",
+                "provider worker rejects malformed output");
+
+            DeviceProfile hungProfile = WorkerProfile("fixture.same-device",
+                "test.worker");
+            hungProfile.ProviderOptions["FixtureBehavior"] = "hang";
+            bool cancelled = false;
+            Stopwatch duration = Stopwatch.StartNew();
+            using (CancellationTokenSource timeout = new CancellationTokenSource())
+            {
+                timeout.CancelAfter(300);
+                try
+                {
+                    client.ReadAsync(hungProfile, timeout.Token)
+                        .GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                }
+            }
+            duration.Stop();
+            int killedProcessId = ProviderWorkerClient.LastStartedWorkerProcessId;
+            bool childExited = SpinWait.SpinUntil(
+                () => ProviderWorkerClient.ActiveWorkerCount == 0, 2000);
+            Check(failures, cancelled && childExited &&
+                    duration.ElapsedMilliseconds < 2500 &&
+                    IsProcessExited(killedProcessId),
+                "provider worker hard timeout terminates a hung child");
+
+            hungProfile.ProviderOptions["FixtureBehavior"] = "success";
+            BatteryReading retry = client.ReadAsync(hungProfile,
+                    CancellationToken.None).GetAwaiter().GetResult();
+            Check(failures, retry.Connection == DeviceConnectionState.Connected &&
+                    retry.Percent == 61 && retry.ProfileId == hungProfile.Id &&
+                    ProviderWorkerClient.ActiveWorkerCount == 0,
+                "provider worker retries the same device after terminating a hang");
+
+            DeviceProfile exitProfile = WorkerProfile("fixture.exit",
+                "test.worker");
+            BatteryReading nonzeroExit = client.ReadAsync(exitProfile,
+                    CancellationToken.None).GetAwaiter().GetResult();
+            Check(failures, nonzeroExit.Connection == DeviceConnectionState.Error &&
+                    nonzeroExit.ErrorCode == "provider-worker-exit",
+                "provider worker rejects a nonzero child exit");
+
+            DeviceProfile floodProfile = WorkerProfile("fixture.flood",
+                "test.worker");
+            BatteryReading flood = client.ReadAsync(floodProfile,
+                    CancellationToken.None).GetAwaiter().GetResult();
+            Check(failures, flood.Connection == DeviceConnectionState.Error &&
+                    flood.ErrorCode == "provider-worker-output-too-large" &&
+                    ProviderWorkerClient.ActiveWorkerCount == 0,
+                "provider worker bounds and rejects excessive output");
+        }
+
+        private static bool IsProcessExited(int processId)
+        {
+            if (processId <= 0)
+                return false;
+            try
+            {
+                using (Process process = Process.GetProcessById(processId))
+                    return process.HasExited;
+            }
+            catch (ArgumentException)
+            {
+                return true;
+            }
+        }
+
+        private static void CheckMonitorIsolation(List<string> failures)
+        {
+            DeviceProfile hungProfile = MonitorProfile("monitor.hung", "test.monitor.hung", 0);
+            DeviceProfile sameDeviceProfile = MonitorProfile(
+                "monitor.same-device", "test.monitor.same-device", 0);
+            DeviceProfile secondHungProfile = MonitorProfile(
+                "monitor.second-hung", "test.monitor.second-hung", 2);
+            DeviceProfile fastProfile = MonitorProfile("monitor.fast", "test.monitor.fast", 1);
+            DeviceProfile staleProfile = MonitorProfile(
+                "monitor.stale-cache", "test.monitor.stale-cache", 3);
+
+            NeverCompletingProvider hung = new NeverCompletingProvider(
+                hungProfile.ProviderId, hungProfile);
+            SynchronousBlockingProvider secondHung = new SynchronousBlockingProvider(
+                secondHungProfile.ProviderId, secondHungProfile);
+            CountingProvider sameDevice = new CountingProvider(
+                sameDeviceProfile.ProviderId, sameDeviceProfile);
+            CountingProvider fast = new CountingProvider(
+                fastProfile.ProviderId, fastProfile);
+            StaleCacheProvider stale = new StaleCacheProvider(
+                staleProfile.ProviderId, staleProfile);
+            ProviderRegistry registry = new ProviderRegistry();
+            registry.Register(hung);
+            registry.Register(secondHung);
+            registry.Register(sameDevice);
+            registry.Register(fast);
+            registry.Register(stale);
+
+            AppSettings settings = new AppSettings { PollSeconds = 1 };
+            DeviceMonitorService monitor = new DeviceMonitorService(
+                new[]
+                {
+                    hungProfile,
+                    sameDeviceProfile,
+                    secondHungProfile,
+                    fastProfile,
+                    staleProfile
+                },
+                registry,
+                new BatteryReadContext(new HidDeviceEnumerator()),
+                settings,
+                20,
+                100,
+                0,
+                100);
+            int deliveredEvents = 0;
+            int timeoutEvents = 0;
+            int hungConnectedEvents = 0;
+            ManualResetEventSlim blockingSubscriberStarted =
+                new ManualResetEventSlim(false);
+            ManualResetEventSlim releaseBlockingSubscriber =
+                new ManualResetEventSlim(false);
+            monitor.ReadingUpdated += (sender, args) =>
+            {
+                blockingSubscriberStarted.Set();
+                releaseBlockingSubscriber.Wait(4000);
+            };
+            monitor.ReadingUpdated += (sender, args) =>
+            {
+                throw new InvalidOperationException("self-test subscriber failure");
+            };
+            monitor.ReadingUpdated += (sender, args) =>
+            {
+                Interlocked.Increment(ref deliveredEvents);
+                if (args != null && args.Reading != null &&
+                    string.Equals(args.Reading.ProfileId, hungProfile.Id,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(args.Reading.ErrorCode, "provider-watchdog-timeout",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    Interlocked.Increment(ref timeoutEvents);
+                }
+                if (args != null && args.Reading != null &&
+                    string.Equals(args.Reading.ProfileId, hungProfile.Id,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    args.Reading.Connection == DeviceConnectionState.Connected)
+                {
+                    Interlocked.Increment(ref hungConnectedEvents);
+                }
+            };
+
+            Stopwatch lifetime = Stopwatch.StartNew();
+            monitor.Start();
+            bool watchdogObserved = SpinWait.SpinUntil(
+                () => monitor.Health.WatchdogTimeoutCount >= 2 &&
+                      Volatile.Read(ref timeoutEvents) == 1, 1500);
+            bool fastContinued = SpinWait.SpinUntil(() => fast.CallCount >= 2, 3000);
+            DeviceMonitorHealth health = monitor.Health;
+            BatteryReading staleSnapshot = monitor.Snapshot.FirstOrDefault(reading =>
+                string.Equals(reading.ProfileId, staleProfile.Id,
+                    StringComparison.OrdinalIgnoreCase));
+
+            Check(failures, watchdogObserved,
+                "monitor watchdog reports a non-cooperative provider once");
+            Check(failures, fastContinued,
+                "monitor keeps polling other devices after one provider hangs");
+            Check(failures, staleSnapshot != null && staleSnapshot.Percent == 66 &&
+                    staleSnapshot.IsStale &&
+                    staleSnapshot.Connection == DeviceConnectionState.Error,
+                "monitor preserves a provider-supplied stale cache percentage");
+            Check(failures, hung.CallCount == 1 && hung.MaxActive == 1,
+                "monitor keeps at most one raw attempt for a hung device");
+            Check(failures, secondHung.CallCount == 1 && secondHung.MaxActive == 1,
+                "monitor fills both responsive slots before watchdog recovery");
+            Check(failures, sameDevice.CallCount == 0,
+                "monitor retains the physical I/O key while a timed-out call remains alive");
+            Check(failures, health.WatchdogTimeoutCount >= 2 &&
+                    health.TimedOutNativeCallCount == 2 &&
+                    health.ActiveReadCount >= health.TimedOutNativeCallCount,
+                "monitor health exposes quarantined native calls");
+            Check(failures, health.SubscriberErrorCount >= 1 &&
+                    Volatile.Read(ref deliveredEvents) >= 2 &&
+                    blockingSubscriberStarted.IsSet &&
+                    health.LastHeartbeatUtc > DateTime.MinValue,
+                "monitor isolates blocked and throwing subscribers while keeping its heartbeat");
+
+            DeviceProfile bluetoothKeys = new DeviceProfile
+            {
+                Id = "monitor.bluetooth-keys",
+                Match = new DeviceMatch
+                {
+                    Transport = "bluetooth-gatt",
+                    VendorId = "0x045E",
+                    ProductIds = new List<string> { "0x0B13" },
+                    BluetoothServiceId = "bt-bas-0123456789abcdef01234567"
+                }
+            };
+            IList<string> ioKeys = DeviceMonitorService.BuildIoKeys(bluetoothKeys);
+            Check(failures,
+                ioKeys.Contains("bt:bt-bas-0123456789abcdef01234567",
+                    StringComparer.OrdinalIgnoreCase) &&
+                ioKeys.Contains("bt:045E:0B13",
+                    StringComparer.OrdinalIgnoreCase),
+                "Bluetooth I/O ownership retains both local-service and hardware keys");
+
+            releaseBlockingSubscriber.Set();
+            monitor.RefreshAll();
+            monitor.RefreshAll();
+            Thread.Sleep(200);
+            Check(failures, hung.CallCount == 1 && hung.MaxActive == 1 &&
+                    secondHung.CallCount == 1 && secondHung.MaxActive == 1,
+                "manual refresh coalesces without overlapping a hung request");
+
+            hung.Release();
+            secondHung.Release();
+            bool pendingRefreshRan = SpinWait.SpinUntil(() =>
+                hung.CallCount >= 2 && secondHung.CallCount >= 2 &&
+                Volatile.Read(ref hungConnectedEvents) >= 1, 1500);
+            Check(failures, pendingRefreshRan && hung.CallCount == 2 &&
+                    secondHung.CallCount == 2 && hung.MaxActive == 1 &&
+                    secondHung.MaxActive == 1,
+                "late timed-out completion is discarded and one pending refresh runs");
+            Check(failures, Volatile.Read(ref hungConnectedEvents) == 1,
+                "late timed-out success is not published before the pending retry");
+
+            int beforeDisposeEvents = Volatile.Read(ref deliveredEvents);
+            Stopwatch dispose = Stopwatch.StartNew();
+            monitor.Dispose();
+            dispose.Stop();
+            Thread.Sleep(100);
+            lifetime.Stop();
+            Check(failures, dispose.ElapsedMilliseconds < 1000,
+                "monitor disposal is bounded while native work is outstanding");
+            Check(failures, Volatile.Read(ref deliveredEvents) == beforeDisposeEvents,
+                "late provider completion does not publish after monitor disposal");
+            Check(failures, lifetime.ElapsedMilliseconds < 5000,
+                "monitor isolation self-test remains bounded");
+
+            DeviceProfile diagnosticHungProfile = MonitorProfile(
+                "diagnostics.hung", "test.diagnostics.hung", 0);
+            DeviceProfile diagnosticFastProfile = MonitorProfile(
+                "diagnostics.fast", "test.diagnostics.fast", 1);
+            SynchronousBlockingProvider diagnosticHung = new SynchronousBlockingProvider(
+                diagnosticHungProfile.ProviderId, diagnosticHungProfile);
+            CountingProvider diagnosticFast = new CountingProvider(
+                diagnosticFastProfile.ProviderId, diagnosticFastProfile);
+            ProviderRegistry diagnosticRegistry = new ProviderRegistry();
+            diagnosticRegistry.Register(diagnosticHung);
+            diagnosticRegistry.Register(diagnosticFast);
+            DiagnosticsService diagnosticService = new DiagnosticsService(
+                new[] { diagnosticHungProfile, diagnosticFastProfile },
+                diagnosticRegistry,
+                new BatteryReadContext(new HidDeviceEnumerator()),
+                100,
+                0);
+            Stopwatch diagnosticDuration = Stopwatch.StartNew();
+            IList<BatteryReading> diagnosticReadings = diagnosticService
+                .ReadOnceAsync(CancellationToken.None).GetAwaiter().GetResult();
+            diagnosticDuration.Stop();
+            Check(failures, diagnosticReadings.Count == 2 &&
+                    diagnosticReadings[0].ErrorCode == "provider-watchdog-timeout" &&
+                    diagnosticReadings[1].Connection == DeviceConnectionState.Connected &&
+                    diagnosticFast.CallCount == 1,
+                "one-shot diagnostics skips a hung provider and continues");
+            Check(failures, diagnosticDuration.ElapsedMilliseconds < 1500,
+                "one-shot diagnostics watchdog is bounded");
+
+            ManualResetEventSlim enumerationRelease = new ManualResetEventSlim(false);
+            DiagnosticsService textService = new DiagnosticsService(
+                new[] { diagnosticFastProfile },
+                diagnosticRegistry,
+                new BatteryReadContext(new HidDeviceEnumerator()),
+                100,
+                0,
+                () =>
+                {
+                    enumerationRelease.Wait();
+                    return new HidEnumerationResult(
+                        new List<HidDeviceDescriptor>(), new List<string>());
+                });
+            Stopwatch textDuration = Stopwatch.StartNew();
+            string diagnosticText = textService.BuildText(new[]
+            {
+                ProviderSupport.Connected(diagnosticFastProfile, 50,
+                    BatteryLevelBand.High, DeviceChargeState.Discharging,
+                    "배터리 충분", "test", false)
+            });
+            textDuration.Stop();
+            Check(failures,
+                diagnosticText.Contains("enumeration timeout") &&
+                textDuration.ElapsedMilliseconds < 1500,
+                "diagnostics HID metadata enumeration watchdog is bounded");
+            enumerationRelease.Set();
+            enumerationRelease.Dispose();
+            diagnosticHung.Release();
+        }
+
+        private static DeviceProfile MonitorProfile(string id, string providerId,
+            int xinputSlot)
+        {
+            return new DeviceProfile
+            {
+                Id = id,
+                DisplayName = id,
+                Category = "gamepad",
+                ProviderId = providerId,
+                PollSeconds = 1,
+                TimeoutMilliseconds = 250,
+                Match = new DeviceMatch
+                {
+                    Transport = "xinput",
+                    XInputUserIndex = xinputSlot
+                }
+            };
+        }
+
+        private static DeviceProfile WorkerProfile(string id, string providerId)
+        {
+            return new DeviceProfile
+            {
+                Id = id,
+                DisplayName = id,
+                Category = "keyboard",
+                ProviderId = providerId,
+                PollSeconds = 10,
+                TimeoutMilliseconds = 250,
+                Match = new DeviceMatch
+                {
+                    Transport = "hid",
+                    VendorId = "1234",
+                    ProductIds = new List<string> { "5678" },
+                    InterfaceNumber = 1,
+                    UsagePage = "0xFF00",
+                    Usage = "0x0001"
+                }
+            };
+        }
+
+        private sealed class CountingProvider : IBatteryProvider
+        {
+            private readonly DeviceProfile _profile;
+            private int _callCount;
+
+            public string ProviderId { get; private set; }
+            public int CallCount { get { return Volatile.Read(ref _callCount); } }
+
+            public CountingProvider(string providerId, DeviceProfile profile)
+            {
+                ProviderId = providerId;
+                _profile = profile;
+            }
+
+            public Task<BatteryReading> ReadAsync(DeviceProfile profile,
+                BatteryReadContext context, CancellationToken cancellationToken)
+            {
+                Interlocked.Increment(ref _callCount);
+                return Task.FromResult(new BatteryReading
+                {
+                    ProfileId = _profile.Id,
+                    DisplayName = _profile.DisplayName,
+                    Category = _profile.Category,
+                    Percent = 80,
+                    Band = BatteryReading.BandFromPercent(80),
+                    Connection = DeviceConnectionState.Connected,
+                    Charge = DeviceChargeState.Discharging,
+                    StatusText = "연결됨",
+                    Presence = DevicePresenceState.Present
+                });
+            }
+        }
+
+        private sealed class NeverCompletingProvider : IBatteryProvider
+        {
+            private readonly DeviceProfile _profile;
+            private readonly TaskCompletionSource<BatteryReading> _completion =
+                new TaskCompletionSource<BatteryReading>();
+            private int _callCount;
+            private int _active;
+            private int _maxActive;
+
+            public string ProviderId { get; private set; }
+            public int CallCount { get { return Volatile.Read(ref _callCount); } }
+            public int MaxActive { get { return Volatile.Read(ref _maxActive); } }
+
+            public NeverCompletingProvider(string providerId, DeviceProfile profile)
+            {
+                ProviderId = providerId;
+                _profile = profile;
+            }
+
+            public async Task<BatteryReading> ReadAsync(DeviceProfile profile,
+                BatteryReadContext context, CancellationToken cancellationToken)
+            {
+                Interlocked.Increment(ref _callCount);
+                int active = Interlocked.Increment(ref _active);
+                UpdateMaximum(ref _maxActive, active);
+                CancellationTokenRegistration registration =
+                    cancellationToken.Register(() =>
+                    {
+                        throw new InvalidOperationException(
+                            "self-test cancellation callback failure");
+                    });
+                try
+                {
+                    return await _completion.Task.ConfigureAwait(false);
+                }
+                finally
+                {
+                    registration.Dispose();
+                    Interlocked.Decrement(ref _active);
+                }
+            }
+
+            public void Release()
+            {
+                _completion.TrySetResult(new BatteryReading
+                {
+                    ProfileId = _profile.Id,
+                    DisplayName = _profile.DisplayName,
+                    Category = _profile.Category,
+                    Percent = 75,
+                    Band = BatteryReading.BandFromPercent(75),
+                    Connection = DeviceConnectionState.Connected,
+                    Presence = DevicePresenceState.Present
+                });
+            }
+
+            private static void UpdateMaximum(ref int target, int candidate)
+            {
+                int current;
+                do
+                {
+                    current = Volatile.Read(ref target);
+                    if (candidate <= current)
+                        return;
+                }
+                while (Interlocked.CompareExchange(ref target, candidate, current) != current);
+            }
+        }
+
+        private sealed class StaleCacheProvider : IBatteryProvider
+        {
+            private readonly DeviceProfile _profile;
+
+            public string ProviderId { get; private set; }
+
+            public StaleCacheProvider(string providerId, DeviceProfile profile)
+            {
+                ProviderId = providerId;
+                _profile = profile;
+            }
+
+            public Task<BatteryReading> ReadAsync(DeviceProfile profile,
+                BatteryReadContext context, CancellationToken cancellationToken)
+            {
+                return Task.FromResult(new BatteryReading
+                {
+                    ProfileId = _profile.Id,
+                    DisplayName = _profile.DisplayName,
+                    Category = _profile.Category,
+                    Percent = 66,
+                    Band = BatteryReading.BandFromPercent(66),
+                    Connection = DeviceConnectionState.Error,
+                    StatusText = "새 값 조회 실패",
+                    IsStale = true,
+                    Presence = DevicePresenceState.Present
+                });
+            }
+        }
+
+        private sealed class SynchronousBlockingProvider : IBatteryProvider
+        {
+            private readonly DeviceProfile _profile;
+            private readonly ManualResetEventSlim _release =
+                new ManualResetEventSlim(false);
+            private int _callCount;
+            private int _active;
+            private int _maxActive;
+
+            public string ProviderId { get; private set; }
+            public int CallCount { get { return Volatile.Read(ref _callCount); } }
+            public int MaxActive { get { return Volatile.Read(ref _maxActive); } }
+
+            public SynchronousBlockingProvider(string providerId,
+                DeviceProfile profile)
+            {
+                ProviderId = providerId;
+                _profile = profile;
+            }
+
+            public Task<BatteryReading> ReadAsync(DeviceProfile profile,
+                BatteryReadContext context, CancellationToken cancellationToken)
+            {
+                Interlocked.Increment(ref _callCount);
+                int active = Interlocked.Increment(ref _active);
+                UpdateMaximum(ref _maxActive, active);
+                CancellationTokenRegistration registration =
+                    cancellationToken.Register(() => _release.Wait());
+                try
+                {
+                    _release.Wait();
+                    return Task.FromResult(new BatteryReading
+                    {
+                        ProfileId = _profile.Id,
+                        DisplayName = _profile.DisplayName,
+                        Category = _profile.Category,
+                        Percent = 70,
+                        Band = BatteryReading.BandFromPercent(70),
+                        Connection = DeviceConnectionState.Connected,
+                        Presence = DevicePresenceState.Present
+                    });
+                }
+                finally
+                {
+                    registration.Dispose();
+                    Interlocked.Decrement(ref _active);
+                }
+            }
+
+            public void Release()
+            {
+                _release.Set();
+            }
+
+            private static void UpdateMaximum(ref int target, int candidate)
+            {
+                int current;
+                do
+                {
+                    current = Volatile.Read(ref target);
+                    if (candidate <= current)
+                        return;
+                }
+                while (Interlocked.CompareExchange(ref target, candidate, current) != current);
+            }
         }
 
         private static void CheckBluetoothProfileValidation(List<string> failures)
@@ -839,12 +1436,62 @@ namespace PeripheralBatteryDashboard.Diagnostics
                     System.Drawing.Color.FromArgb(255, 55, 206, 194).ToArgb(),
                     "tray exact percent honors profile low threshold");
 
+                BatteryReading errorWithLastValue = TestReading(DeviceConnectionState.Error, 73);
+                errorWithLastValue.IsStale = true;
+                errorWithLastValue.StatusText = "조회 오류";
+                object errorVisual = createVisual.Invoke(null,
+                    new object[] { profile, errorWithLastValue });
+                string errorKey = VisualProperty(errorVisual, "RenderKey");
+                string errorToolTip = Convert.ToString(buildDeviceToolTip.Invoke(null,
+                    new object[] { profile, errorWithLastValue }));
+                Check(failures, VisualProperty(errorVisual, "Text") == "73" &&
+                    errorKey.StartsWith("error|73|stale:True", StringComparison.Ordinal) &&
+                    VisualColorArgb(errorVisual) ==
+                        System.Drawing.Color.FromArgb(255, 255, 154, 169).ToArgb() &&
+                    VisualBackgroundArgb(errorVisual) ==
+                        System.Drawing.Color.FromArgb(255, 157, 37, 60).ToArgb() &&
+                    errorToolTip.Contains("조회 오류 · 마지막 73%"),
+                    "tray error keeps last percent on red background");
+
+                object normalSamePercent = createVisual.Invoke(null,
+                    new object[] { profile, TestReading(DeviceConnectionState.Connected, 73) });
+                Check(failures, errorKey != VisualProperty(normalSamePercent, "RenderKey"),
+                    "tray normal and error visuals use different render keys");
+
+                BatteryReading errorWithoutValue = TestReading(DeviceConnectionState.Error, null);
+                object errorWithoutValueVisual = createVisual.Invoke(null,
+                    new object[] { profile, errorWithoutValue });
+                Check(failures, VisualProperty(errorWithoutValueVisual, "Text") == "—" &&
+                    VisualBackgroundArgb(errorWithoutValueVisual) ==
+                        System.Drawing.Color.FromArgb(255, 157, 37, 60).ToArgb() &&
+                    errorKey != VisualProperty(errorWithoutValueVisual, "RenderKey"),
+                    "tray error without last percent uses red dash");
+
+                object combinedErrorVisual = createCombinedVisual.Invoke(null,
+                    new object[] { errorVisual });
+                Check(failures, VisualProperty(combinedErrorVisual, "Text") == "73" &&
+                    VisualProperty(combinedErrorVisual, "DeviceShape") == "combined" &&
+                    VisualBackgroundArgb(combinedErrorVisual) ==
+                        System.Drawing.Color.FromArgb(255, 157, 37, 60).ToArgb(),
+                    "combined tray preserves red stale-error visual");
+
+                object combinedErrorWithoutValueVisual = createCombinedVisual.Invoke(null,
+                    new object[] { errorWithoutValueVisual });
+                Check(failures,
+                    VisualProperty(combinedErrorWithoutValueVisual, "Text") == "—" &&
+                    VisualProperty(combinedErrorWithoutValueVisual, "DeviceShape") == "combined" &&
+                    VisualBackgroundArgb(combinedErrorWithoutValueVisual) ==
+                        System.Drawing.Color.FromArgb(255, 157, 37, 60).ToArgb(),
+                    "combined tray preserves red error visual without cached value");
+
                 BatteryReading offlineReading = TestReading(DeviceConnectionState.Disconnected, 73);
                 object offlineVisual = createVisual.Invoke(null, new object[] { profile, offlineReading });
                 string offlineKey = VisualProperty(offlineVisual, "RenderKey");
                 Check(failures, VisualProperty(offlineVisual, "Text") == "—" &&
                     offlineKey.StartsWith("offline|", StringComparison.Ordinal) &&
-                    offlineKey != unknownKey,
+                    offlineKey != unknownKey &&
+                    VisualBackgroundArgb(offlineVisual) ==
+                        System.Drawing.Color.FromArgb(255, 17, 27, 46).ToArgb(),
                     "tray offline visual");
 
                 string exactly63 = new string('가', 63);
@@ -910,6 +1557,20 @@ namespace PeripheralBatteryDashboard.Diagnostics
             if (visual == null)
                 return 0;
             PropertyInfo property = visual.GetType().GetProperty("Accent",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (property == null)
+                return 0;
+            object value = property.GetValue(visual, null);
+            return value is System.Drawing.Color
+                ? ((System.Drawing.Color)value).ToArgb()
+                : 0;
+        }
+
+        private static int VisualBackgroundArgb(object visual)
+        {
+            if (visual == null)
+                return 0;
+            PropertyInfo property = visual.GetType().GetProperty("Background",
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (property == null)
                 return 0;

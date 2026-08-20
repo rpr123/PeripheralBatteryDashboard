@@ -54,10 +54,19 @@ namespace PeripheralBatteryDashboard.Providers
 
             if (result.Status == BluetoothGattBatteryReadStatus.FoundUnavailable)
             {
-                return PresentUnavailable(profile, DeviceConnectionState.Busy,
-                    "Bluetooth 배터리 조회 대기",
-                    "표준 Battery Service는 감지됐지만 현재 값을 읽을 수 없습니다.",
+                BatteryReading unavailable = PresentUnavailable(profile,
+                    result.Percent.HasValue
+                        ? DeviceConnectionState.Error
+                        : DeviceConnectionState.Busy,
+                    result.Percent.HasValue
+                        ? "Bluetooth 새 값 조회 실패"
+                        : "Bluetooth 배터리 조회 대기",
+                    result.Percent.HasValue
+                        ? "물리 장치 갱신에 실패해 마지막 Windows 캐시 값을 표시합니다."
+                        : "표준 Battery Service는 감지됐지만 현재 값을 읽을 수 없습니다.",
                     "standard-battery-read-unavailable");
+                ApplyStaleCache(unavailable, result.Percent);
+                return unavailable;
             }
             if (result.Status == BluetoothGattBatteryReadStatus.Ambiguous)
             {
@@ -104,6 +113,15 @@ namespace PeripheralBatteryDashboard.Providers
                 status, detail, errorCode);
             reading.Presence = DevicePresenceState.Present;
             return reading;
+        }
+
+        private static void ApplyStaleCache(BatteryReading reading, int? percent)
+        {
+            if (reading == null || !percent.HasValue)
+                return;
+            reading.Percent = percent.Value;
+            reading.Band = BatteryReading.BandFromPercent(percent.Value);
+            reading.IsStale = true;
         }
 
         private static string GetStringOption(DeviceProfile profile, string key,

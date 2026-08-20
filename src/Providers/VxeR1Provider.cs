@@ -59,6 +59,10 @@ namespace PeripheralBatteryDashboard.Providers
                 return BatteryReading.Unavailable(profile, DeviceConnectionState.Sleeping,
                     "마우스 응답 없음", "마우스가 절전 중일 수 있습니다.", "unexpected-response");
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 return ProviderSupport.FromException(profile, ex);

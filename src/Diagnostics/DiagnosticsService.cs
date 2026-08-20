@@ -16,12 +16,38 @@ namespace PeripheralBatteryDashboard.Diagnostics
         private readonly IList<DeviceProfile> _profiles;
         private readonly ProviderRegistry _registry;
         private readonly BatteryReadContext _context;
+        private readonly int _minimumWatchdogMilliseconds;
+        private readonly int _timeoutMultiplier;
+        private readonly Func<HidEnumerationResult> _hidMetadataEnumerator;
+        private readonly object _hidEnumerationLock = new object();
+        private Task<HidEnumerationResult> _hidEnumerationTask;
 
         public DiagnosticsService(IList<DeviceProfile> profiles, ProviderRegistry registry, BatteryReadContext context)
+            : this(profiles, registry, context, 5000, 8)
+        {
+        }
+
+        internal DiagnosticsService(IList<DeviceProfile> profiles,
+            ProviderRegistry registry, BatteryReadContext context,
+            int minimumWatchdogMilliseconds, int timeoutMultiplier)
+            : this(profiles, registry, context, minimumWatchdogMilliseconds,
+                timeoutMultiplier, null)
+        {
+        }
+
+        internal DiagnosticsService(IList<DeviceProfile> profiles,
+            ProviderRegistry registry, BatteryReadContext context,
+            int minimumWatchdogMilliseconds, int timeoutMultiplier,
+            Func<HidEnumerationResult> hidMetadataEnumerator)
         {
             _profiles = profiles;
             _registry = registry;
             _context = context;
+            _minimumWatchdogMilliseconds = Math.Max(50,
+                minimumWatchdogMilliseconds);
+            _timeoutMultiplier = Math.Max(0, timeoutMultiplier);
+            _hidMetadataEnumerator = hidMetadataEnumerator ??
+                (() => _context.HidDevices.EnumerateMetadata());
         }
 
         public async Task<IList<BatteryReading>> ReadOnceAsync(CancellationToken token)
@@ -51,11 +77,12 @@ namespace PeripheralBatteryDashboard.Diagnostics
 
                 try
                 {
-                    using (CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(token))
-                    {
-                        timeout.CancelAfter(Math.Max(5000, profile.EffectiveTimeoutMilliseconds * 8));
-                        readings.Add(await provider.ReadAsync(profile, _context, timeout.Token).ConfigureAwait(false));
-                    }
+                    readings.Add(await ReadProviderWithWatchdogAsync(profile, provider,
+                        token).ConfigureAwait(false));
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -64,6 +91,83 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 }
             }
             return readings;
+        }
+
+        private async Task<BatteryReading> ReadProviderWithWatchdogAsync(
+            DeviceProfile profile, IBatteryProvider provider, CancellationToken token)
+        {
+            CancellationTokenSource attempt =
+                CancellationTokenSource.CreateLinkedTokenSource(token);
+            Task<BatteryReading> providerTask;
+            try
+            {
+                providerTask = Task.Factory.StartNew(
+                    () => provider.ReadAsync(profile, _context, attempt.Token),
+                    CancellationToken.None,
+                    TaskCreationOptions.DenyChildAttach,
+                    TaskScheduler.Default).Unwrap();
+            }
+            catch
+            {
+                attempt.Dispose();
+                throw;
+            }
+
+            int scaled = _timeoutMultiplier == 0
+                ? 0
+                : profile.EffectiveTimeoutMilliseconds * _timeoutMultiplier;
+            int watchdogMilliseconds = Math.Max(_minimumWatchdogMilliseconds, scaled);
+            Task delay = Task.Delay(watchdogMilliseconds, token);
+            Task completed = await Task.WhenAny(providerTask, delay).ConfigureAwait(false);
+            if (completed == providerTask)
+            {
+                try
+                {
+                    BatteryReading reading = await providerTask.ConfigureAwait(false);
+                    return reading ?? BatteryReading.Unavailable(profile,
+                        DeviceConnectionState.Error,
+                        "조회 오류",
+                        "공급자가 상태를 반환하지 않았습니다.",
+                        "provider-null-reading");
+                }
+                finally
+                {
+                    attempt.Dispose();
+                }
+            }
+
+            Task cancelRequest = Task.Factory.StartNew(() =>
+                {
+                    try { attempt.Cancel(); }
+                    catch { }
+                },
+                CancellationToken.None,
+                TaskCreationOptions.DenyChildAttach,
+                TaskScheduler.Default);
+            Task providerObservation = providerTask.ContinueWith(late =>
+                {
+                    if (late.IsFaulted)
+                    {
+                        var ignored = late.Exception;
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            _ = Task.WhenAll(cancelRequest, providerObservation).ContinueWith(completed =>
+                {
+                    try { attempt.Dispose(); }
+                    catch { }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            token.ThrowIfCancellationRequested();
+            return BatteryReading.Unavailable(profile,
+                DeviceConnectionState.Error,
+                "조회 시간 초과",
+                "장치 또는 Windows 드라이버 호출이 반환되지 않아 이 진단 항목을 건너뛰었습니다.",
+                "provider-watchdog-timeout");
         }
 
         public string BuildText(IList<BatteryReading> readings)
@@ -114,14 +218,26 @@ namespace PeripheralBatteryDashboard.Diagnostics
             text.AppendLine("HID collections (paths and serials omitted)");
             try
             {
-                foreach (HidDeviceDescriptor device in _context.HidDevices.Enumerate())
+                string enumerationStatus;
+                HidEnumerationResult scan = EnumerateHidMetadataWithWatchdog(
+                    out enumerationStatus);
+                if (scan == null)
                 {
-                    text.Append("- ").Append(device.SafeIdentity)
-                        .Append(" | ").Append(device.ProductName)
-                        .Append(" | IN=").Append(device.InputReportLength)
-                        .Append(" OUT=").Append(device.OutputReportLength)
-                        .Append(" FEATURE=").Append(device.FeatureReportLength)
-                        .AppendLine();
+                    text.AppendLine("- " + enumerationStatus);
+                }
+                else
+                {
+                    foreach (HidDeviceDescriptor device in scan.Devices)
+                    {
+                        text.Append("- ").Append(device.SafeIdentity)
+                            .Append(" | ").Append(device.ProductName)
+                            .Append(" | IN=").Append(device.InputReportLength)
+                            .Append(" OUT=").Append(device.OutputReportLength)
+                            .Append(" FEATURE=").Append(device.FeatureReportLength)
+                            .AppendLine();
+                    }
+                    foreach (string warning in scan.WarningCodes)
+                        text.AppendLine("- enumeration warning: " + warning);
                 }
             }
             catch (Exception ex)
@@ -129,6 +245,51 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 text.AppendLine("- enumeration error: " + ex.Message);
             }
             return text.ToString();
+        }
+
+        private HidEnumerationResult EnumerateHidMetadataWithWatchdog(
+            out string status)
+        {
+            Task<HidEnumerationResult> task;
+            lock (_hidEnumerationLock)
+            {
+                if (_hidEnumerationTask == null || _hidEnumerationTask.IsCompleted)
+                {
+                    _hidEnumerationTask = Task.Factory.StartNew(
+                        _hidMetadataEnumerator,
+                        CancellationToken.None,
+                        TaskCreationOptions.DenyChildAttach,
+                        TaskScheduler.Default);
+                }
+                task = _hidEnumerationTask;
+            }
+
+            try
+            {
+                if (!task.Wait(_minimumWatchdogMilliseconds))
+                {
+                    status = "enumeration timeout: Windows HID metadata call is still pending";
+                    return null;
+                }
+                status = string.Empty;
+                return task.GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                status = "enumeration error: " + ex.GetBaseException().Message;
+                return null;
+            }
+            finally
+            {
+                if (task.IsCompleted)
+                {
+                    lock (_hidEnumerationLock)
+                    {
+                        if (ReferenceEquals(_hidEnumerationTask, task))
+                            _hidEnumerationTask = null;
+                    }
+                }
+            }
         }
 
         public string ToJson(IList<BatteryReading> readings)

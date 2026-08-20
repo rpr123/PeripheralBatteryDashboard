@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Microsoft.Win32.SafeHandles;
 
 namespace PeripheralBatteryDashboard.Hardware
@@ -86,6 +87,10 @@ namespace PeripheralBatteryDashboard.Hardware
         private static readonly object RefreshGate = new object();
         private static readonly Dictionary<string, DateTime> LastDeviceRefreshAttempts =
             new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, bool> LastDeviceRefreshFailures =
+            new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> DeviceRefreshInFlight =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan DeviceRefreshInterval = TimeSpan.FromMinutes(5);
 
         internal static bool InteropLayoutIsValid
@@ -279,16 +284,64 @@ namespace PeripheralBatteryDashboard.Hardware
                     return new BluetoothGattBatteryReadResult(
                         BluetoothGattBatteryReadStatus.FoundUnavailable, null, 1);
                 }
-                // Refresh the physical device at most every five minutes. Normal
-                // polls use the Windows cache and do not repeatedly wake it.
+                // Refresh the physical device at most once every five minutes.
+                // Native FORCE_DEVICE calls cannot be cancelled, so the monitor
+                // quarantines this per-device attempt if it misses its watchdog.
+                // Normal polls between refreshes use the Windows cache.
                 int percent;
-                bool refreshFromDevice = TakeDeviceRefreshSlot(selectedPath);
-                if ((refreshFromDevice &&
-                     TryReadBatteryLevel(handle, ForceReadFromDevice, out percent)) ||
-                    TryReadBatteryLevel(handle, ForceReadFromCache, out percent))
+                bool deviceRefreshFailed = false;
+                if (TryBeginDeviceRefresh(selectedPath))
+                {
+                    Mutex refreshMutex = null;
+                    bool ownsRefreshMutex = false;
+                    try
+                    {
+                        ownsRefreshMutex = TryAcquireDeviceRefreshMutex(selectedPath,
+                            out refreshMutex);
+                        if (ownsRefreshMutex)
+                        {
+                            deviceRefreshFailed = true;
+                            if (TryReadBatteryLevel(handle, ForceReadFromDevice,
+                                out percent))
+                            {
+                                SetDeviceRefreshFailed(selectedPath, false);
+                                return new BluetoothGattBatteryReadResult(
+                                    BluetoothGattBatteryReadStatus.Success, percent, 1);
+                            }
+                            SetDeviceRefreshFailed(selectedPath, true);
+                        }
+                        else
+                        {
+                            // Another process is refreshing this exact service, or
+                            // the cross-process guard is unavailable. Do not claim
+                            // the cached value is fresh and retry on the next poll.
+                            deviceRefreshFailed = true;
+                            SetDeviceRefreshFailed(selectedPath, true);
+                            RollbackDeviceRefreshAttempt(selectedPath);
+                        }
+                    }
+                    finally
+                    {
+                        if (refreshMutex != null)
+                        {
+                            if (ownsRefreshMutex)
+                            {
+                                try { refreshMutex.ReleaseMutex(); }
+                                catch { }
+                            }
+                            refreshMutex.Dispose();
+                        }
+                        EndDeviceRefresh(selectedPath);
+                    }
+                }
+                if (TryReadBatteryLevel(handle, ForceReadFromCache, out percent))
                 {
                     return new BluetoothGattBatteryReadResult(
-                        BluetoothGattBatteryReadStatus.Success, percent, 1);
+                        (deviceRefreshFailed || WasLastDeviceRefreshFailed(selectedPath))
+                            ? BluetoothGattBatteryReadStatus.FoundUnavailable
+                            : BluetoothGattBatteryReadStatus.Success,
+                        percent,
+                        1);
                 }
             }
             return new BluetoothGattBatteryReadResult(
@@ -484,17 +537,83 @@ namespace PeripheralBatteryDashboard.Hardware
                 warnings.Add(warning);
         }
 
-        private static bool TakeDeviceRefreshSlot(string path)
+        private static bool TryBeginDeviceRefresh(string path)
         {
             DateTime now = DateTime.UtcNow;
             lock (RefreshGate)
             {
+                if (DeviceRefreshInFlight.Contains(path))
+                    return false;
                 DateTime last;
                 if (LastDeviceRefreshAttempts.TryGetValue(path, out last) &&
                     now - last < DeviceRefreshInterval)
                     return false;
                 LastDeviceRefreshAttempts[path] = now;
+                DeviceRefreshInFlight.Add(path);
                 return true;
+            }
+        }
+
+        private static void EndDeviceRefresh(string path)
+        {
+            lock (RefreshGate)
+                DeviceRefreshInFlight.Remove(path);
+        }
+
+        private static void RollbackDeviceRefreshAttempt(string path)
+        {
+            lock (RefreshGate)
+                LastDeviceRefreshAttempts.Remove(path);
+        }
+
+        private static void SetDeviceRefreshFailed(string path, bool failed)
+        {
+            lock (RefreshGate)
+                LastDeviceRefreshFailures[path] = failed;
+        }
+
+        private static bool WasLastDeviceRefreshFailed(string path)
+        {
+            lock (RefreshGate)
+            {
+                bool failed;
+                return LastDeviceRefreshFailures.TryGetValue(path, out failed) && failed;
+            }
+        }
+
+        internal static string BuildDeviceRefreshMutexName(string path)
+        {
+            string localId = ComputeLocalServiceId(path ?? string.Empty);
+            string suffix = localId.StartsWith("bt-bas-", StringComparison.Ordinal)
+                ? localId.Substring("bt-bas-".Length)
+                : localId;
+            return @"Local\PeripheralBatteryDashboard.GattRefresh." + suffix;
+        }
+
+        private static bool TryAcquireDeviceRefreshMutex(string path,
+            out Mutex mutex)
+        {
+            mutex = null;
+            try
+            {
+                mutex = new Mutex(false, BuildDeviceRefreshMutexName(path));
+                try
+                {
+                    return mutex.WaitOne(0);
+                }
+                catch (AbandonedMutexException)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                if (mutex != null)
+                    mutex.Dispose();
+                mutex = null;
+                // Fail closed: cache may still be shown as stale, but two
+                // processes must never issue an uncoordinated physical refresh.
+                return false;
             }
         }
 

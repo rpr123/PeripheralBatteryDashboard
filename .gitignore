@@ -6,6 +6,7 @@ work/
 artifacts/
 artifacts-*/
 tray-smoke-*/
+backups/
 
 # Local probes and generated binaries
 _compile_probe.*

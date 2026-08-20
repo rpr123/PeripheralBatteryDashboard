@@ -2,7 +2,7 @@
 param(
     [string]$InputDirectory = 'dist',
     [string]$OutputDirectory = 'artifacts',
-    [string]$Version = '1.1.0'
+    [string]$Version = '1.1.2'
 )
 
 Set-StrictMode -Version Latest
@@ -78,13 +78,60 @@ if (Test-Path -LiteralPath $zipPath) {
 $stagingRoot = Join-Path $outputRoot (".package-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
 try {
-    Get-ChildItem -LiteralPath $inputRoot -Force | Where-Object { $_.Extension -ne '.pdb' } |
-        Copy-Item -Destination $stagingRoot -Recurse -Force
+    foreach ($name in $requiredFiles) {
+        $sourcePath = Join-Path $inputRoot $name
+        $destinationPath = Join-Path $stagingRoot $name
+        $destinationParent = Split-Path -Parent $destinationPath
+        if (-not (Test-Path -LiteralPath $destinationParent)) {
+            New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+    }
     Compress-Archive -Path (Join-Path $stagingRoot '*') -DestinationPath $zipPath -CompressionLevel Optimal
 }
 finally {
     if (Test-Path -LiteralPath $stagingRoot) {
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
+    }
+}
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$expectedEntries = @($requiredFiles | ForEach-Object { $_.Replace('\', '/') } | Sort-Object)
+$archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
+try {
+    $actualEntries = @($archive.Entries |
+        Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
+        ForEach-Object { $_.FullName.Replace('\', '/') } |
+        Sort-Object)
+    if (($actualEntries.Count -ne $expectedEntries.Count) -or
+        (Compare-Object -ReferenceObject $expectedEntries -DifferenceObject $actualEntries)) {
+        throw 'Release ZIP contents do not match the exact public allowlist.'
+    }
+}
+finally {
+    $archive.Dispose()
+}
+
+$verificationRoot = Join-Path $outputRoot (".verify-" + [Guid]::NewGuid().ToString('N'))
+try {
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $verificationRoot -Force
+    foreach ($name in $requiredFiles) {
+        $sourceHash = (Get-FileHash -LiteralPath (Join-Path $inputRoot $name) -Algorithm SHA256).Hash
+        $extractedHash = (Get-FileHash -LiteralPath (Join-Path $verificationRoot $name) -Algorithm SHA256).Hash
+        if (-not [string]::Equals($sourceHash, $extractedHash, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Release ZIP verification hash mismatch: $name"
+        }
+    }
+
+    $verifiedDiagnostics = Join-Path $verificationRoot 'PeripheralBatteryDashboard.Diagnostics.exe'
+    & $verifiedDiagnostics --self-test
+    if ($LASTEXITCODE -ne 0) {
+        throw "Extracted release self-test failed with exit code $LASTEXITCODE"
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $verificationRoot) {
+        Remove-Item -LiteralPath $verificationRoot -Recurse -Force
     }
 }
 

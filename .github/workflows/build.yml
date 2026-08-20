@@ -28,8 +28,12 @@ jobs:
         shell: pwsh
         run: |
           $version = .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --version
-          if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne '1.1.0.0') {
+          if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne '1.1.2.0') {
             throw 'Unexpected executable version.'
+          }
+          $manifest = Get-Content .\app.manifest -Raw
+          if ($manifest -notmatch '<assemblyIdentity\s+version="1\.1\.2\.0"') {
+            throw 'Application manifest version does not match the release version.'
           }
           $help = .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --help
           if ($LASTEXITCODE -ne 0 -or ($help -join "`n") -notmatch '--inventory') {
@@ -93,11 +97,11 @@ jobs:
 
       - name: Create portable ZIP
         shell: pwsh
-        run: .\tools\package-release.ps1 -InputDirectory dist-ci -OutputDirectory artifacts -Version 1.1.0
+        run: .\tools\package-release.ps1 -InputDirectory dist-ci -OutputDirectory artifacts -Version 1.1.2
 
       - name: Upload portable build
         uses: actions/upload-artifact@v4
         with:
-          name: PeripheralBatteryDashboard-v1.1.0-win-x64
+          name: PeripheralBatteryDashboard-v1.1.2-win-x64
           path: artifacts/*
           if-no-files-found: error

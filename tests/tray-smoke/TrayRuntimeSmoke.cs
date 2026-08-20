@@ -133,6 +133,14 @@ internal static class SmokeRunner
             tray = new TrayService(window, monitor, settings, delegate { });
             AssertPerDeviceState(tray, profiles.Count, "initial per-device mode");
 
+            PushReading(tray, CreateErrorReading(profiles[2], 70, true));
+            AssertDeviceErrorState(tray, profiles[2].Id, "70",
+                "stale error keeps last percent");
+            PushReading(tray, CreateErrorReading(profiles[2], null, false));
+            AssertDeviceErrorState(tray, profiles[2].Id, "—",
+                "error without last percent");
+            PushReading(tray, CreateReading(profiles[2], DevicePresenceState.Present));
+
             foreach (DeviceProfile profile in profiles)
                 PushReading(tray, CreateReading(profile, DevicePresenceState.Absent));
             AssertNoPresentDeviceState(tray, profiles.Count,
@@ -142,9 +150,21 @@ internal static class SmokeRunner
             AssertPerDeviceState(tray, profiles.Count,
                 "synthetic hardware restored");
 
+            for (int index = 0; index < profiles.Count; index++)
+                PushReading(tray, CreateErrorReading(profiles[index], 70 - index, true));
+
             settings.TrayIconMode = AppSettings.TrayIconModeCombined;
             InvokeApplyTrayMode(tray);
             AssertCombinedState(tray, "first combined switch");
+            AssertCombinedErrorState(tray, "first combined stale-error switch");
+
+            foreach (DeviceProfile profile in profiles)
+                PushReading(tray, CreateErrorReading(profile, null, false));
+            AssertCombinedErrorWithoutValueState(tray,
+                "combined error without cached values");
+
+            foreach (DeviceProfile profile in profiles)
+                PushReading(tray, CreateReading(profile, DevicePresenceState.Present));
 
             settings.TrayIconMode = AppSettings.TrayIconModePerDevice;
             InvokeApplyTrayMode(tray);
@@ -328,6 +348,19 @@ internal static class SmokeRunner
         };
     }
 
+    private static BatteryReading CreateErrorReading(DeviceProfile profile, int? percent,
+        bool stale)
+    {
+        BatteryReading reading = CreateReading(profile, DevicePresenceState.Present);
+        reading.Connection = DeviceConnectionState.Error;
+        reading.Percent = percent;
+        reading.Band = BatteryReading.BandFromPercent(percent);
+        reading.IsStale = stale;
+        reading.StatusText = "조회 오류";
+        reading.DetailText = "synthetic error";
+        return reading;
+    }
+
     private static void PushReading(TrayService tray, BatteryReading reading)
     {
         MethodInfo method = typeof(TrayService).GetMethod("MonitorOnReadingUpdated",
@@ -416,6 +449,49 @@ internal static class SmokeRunner
             phase + ": active mode is not combined");
     }
 
+    private static void AssertDeviceErrorState(TrayService tray, string profileId,
+        string expectedText, string phase)
+    {
+        IDictionary slots = GetDeviceSlots(tray);
+        Assert(slots.Contains(profileId), phase + ": device slot was not found");
+        AssertErrorSlot(slots[profileId], expectedText, phase);
+    }
+
+    private static void AssertCombinedErrorState(TrayService tray, string phase)
+    {
+        object slot = GetPrivateField(tray, "_combinedSlot");
+        Assert(slot != null, phase + ": combined slot was not found");
+        AssertErrorSlot(slot, "67", phase);
+        Assert(GetSlotNotifyIcon(slot).Text.Contains("조회 오류 · 마지막 67%"),
+            phase + ": combined tooltip does not describe the stale error");
+    }
+
+    private static void AssertCombinedErrorWithoutValueState(TrayService tray, string phase)
+    {
+        object slot = GetPrivateField(tray, "_combinedSlot");
+        Assert(slot != null, phase + ": combined slot was not found");
+        AssertErrorSlot(slot, "—", phase);
+        Assert(GetSlotNotifyIcon(slot).Text.Contains("조회 오류"),
+            phase + ": combined tooltip does not describe the error");
+        Assert(!GetSlotNotifyIcon(slot).Text.Contains("응답 대기"),
+            phase + ": combined error was mislabeled as pending");
+    }
+
+    private static void AssertErrorSlot(object slot, string expectedText, string phase)
+    {
+        Forms.NotifyIcon notifyIcon = GetSlotNotifyIcon(slot);
+        Assert(notifyIcon != null && notifyIcon.Visible,
+            phase + ": error NotifyIcon is not visible");
+        string renderKey = Convert.ToString(GetSlotProperty(slot, "RenderKey"));
+        Assert(renderKey.StartsWith("error|" + expectedText + "|", StringComparison.Ordinal) ||
+               renderKey.StartsWith("combined|" + expectedText + "|", StringComparison.Ordinal),
+            phase + ": unexpected error render key: " + renderKey);
+        Icon icon = GetSlotProperty(slot, "CurrentIcon") as Icon;
+        Assert(icon != null, phase + ": current error icon is missing");
+        using (Bitmap bitmap = icon.ToBitmap())
+            AssertRedErrorBackground(bitmap);
+    }
+
     private static void AssertZeroSlotState(TrayService tray, string phase)
     {
         Assert(GetDeviceSlots(tray).Count == 0, phase + ": device slots remain");
@@ -436,6 +512,14 @@ internal static class SmokeRunner
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         Assert(property != null, "TrayIconSlot.NotifyIcon was not found");
         return property.GetValue(slot, null) as Forms.NotifyIcon;
+    }
+
+    private static object GetSlotProperty(object slot, string name)
+    {
+        PropertyInfo property = slot.GetType().GetProperty(name,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert(property != null, "TrayIconSlot property was not found: " + name);
+        return property.GetValue(slot, null);
     }
 
     private static object GetPrivateField(object target, string name)
@@ -466,29 +550,43 @@ internal static class SmokeRunner
     {
         MethodInfo create = trayType.GetMethod("CreateStatusIcon",
             BindingFlags.Static | BindingFlags.NonPublic);
+        MethodInfo createWithBackground = trayType.GetMethod("CreateStatusIconWithBackground",
+            BindingFlags.Static | BindingFlags.NonPublic);
         Assert(create != null, "CreateStatusIcon was not found");
+        Assert(createWithBackground != null, "CreateStatusIconWithBackground was not found");
 
-        string[] texts = { "100", "95", "64", "78" };
-        string[] shapes = { "headset", "keyboard", "mouse", "gamepad" };
+        string[] texts = { "100", "95", "64", "78", "70" };
+        string[] shapes = { "headset", "keyboard", "mouse", "gamepad", "mouse" };
         string[] labels =
         {
             "Headset 100%",
             "Keyboard 95% charge",
             "Mouse 64%",
-            "Gamepad 78%"
+            "Gamepad 78%",
+            "Mouse error · last 70%"
         };
         Color[] accents =
         {
             Color.FromArgb(255, 55, 206, 194),
             Color.FromArgb(255, 55, 206, 194),
             Color.FromArgb(255, 55, 206, 194),
-            Color.FromArgb(255, 55, 206, 194)
+            Color.FromArgb(255, 55, 206, 194),
+            Color.FromArgb(255, 255, 154, 169)
         };
-        bool[] charging = { false, true, false, false };
+        Color[] backgrounds =
+        {
+            Color.FromArgb(255, 17, 27, 46),
+            Color.FromArgb(255, 17, 27, 46),
+            Color.FromArgb(255, 17, 27, 46),
+            Color.FromArgb(255, 17, 27, 46),
+            Color.FromArgb(255, 157, 37, 60)
+        };
+        bool[] charging = { false, true, false, false, false };
 
-        AssertDistinctDeviceShapes(create, shapes);
+        AssertDistinctDeviceShapes(create,
+            new[] { "headset", "keyboard", "mouse", "gamepad" });
 
-        const int width = 920;
+        const int width = 1145;
         const int height = 280;
         using (Bitmap sheet = new Bitmap(width, height, PixelFormat.Format32bppArgb))
         using (Graphics graphics = Graphics.FromImage(sheet))
@@ -504,15 +602,18 @@ internal static class SmokeRunner
 
             for (int index = 0; index < texts.Length; index++)
             {
-                Icon icon = (Icon)create.Invoke(null,
+                Icon icon = (Icon)createWithBackground.Invoke(null,
                     new object[]
                     {
-                        texts[index], accents[index], charging[index], shapes[index]
+                        texts[index], accents[index], charging[index], shapes[index],
+                        backgrounds[index]
                     });
                 try
                 {
                     using (Bitmap native = icon.ToBitmap())
                     {
+                        if (index == texts.Length - 1)
+                            AssertRedErrorBackground(native);
                         int left = 20 + index * 225;
                         graphics.DrawRectangle(frame, left, 54, 205, 205);
                         graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
@@ -533,6 +634,21 @@ internal static class SmokeRunner
             }
             sheet.Save(outputPath, ImageFormat.Png);
         }
+    }
+
+    private static void AssertRedErrorBackground(Bitmap bitmap)
+    {
+        int redPixels = 0;
+        for (int y = 0; y < bitmap.Height; y++)
+        {
+            for (int x = 0; x < bitmap.Width; x++)
+            {
+                Color pixel = bitmap.GetPixel(x, y);
+                if (pixel.A > 200 && pixel.R > 120 && pixel.R > pixel.G * 2)
+                    redPixels++;
+            }
+        }
+        Assert(redPixels >= 40, "error tray icon does not contain a visible red background");
     }
 
     private static void AssertDistinctDeviceShapes(MethodInfo create, string[] shapes)

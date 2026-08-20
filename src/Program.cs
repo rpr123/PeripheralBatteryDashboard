@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -17,8 +18,8 @@ using PeripheralBatteryDashboard.UI;
 [assembly: AssemblyDescription("Windows 주변기기 배터리 상태 대시보드")]
 [assembly: AssemblyCompany("rpr123")]
 [assembly: AssemblyCopyright("Copyright © 2026 rpr123")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.1.2.0")]
+[assembly: AssemblyFileVersion("1.1.2.0")]
 
 namespace PeripheralBatteryDashboard
 {
@@ -45,6 +46,10 @@ namespace PeripheralBatteryDashboard
                     return RunConsoleDiagnostics(baseDirectory, true);
                 if (string.Equals(mode, "--diagnostics", StringComparison.OrdinalIgnoreCase))
                     return RunConsoleDiagnostics(baseDirectory, false);
+                if (string.Equals(mode, "--provider-worker", StringComparison.OrdinalIgnoreCase))
+                    return RunProviderWorker(baseDirectory, args, false);
+                if (string.Equals(mode, "--provider-worker-fixture", StringComparison.OrdinalIgnoreCase))
+                    return RunProviderWorker(baseDirectory, args, true);
                 if (string.Equals(mode, "--version", StringComparison.OrdinalIgnoreCase))
                     return PrintVersion();
                 if (string.Equals(mode, "--help", StringComparison.OrdinalIgnoreCase) ||
@@ -119,7 +124,8 @@ namespace PeripheralBatteryDashboard
             if (startupLaunch && !settings.StartWithWindows)
                 return 0;
 
-            DeviceMonitorService monitor = new DeviceMonitorService(profiles, registry, context, settings);
+            DeviceMonitorService monitor = new DeviceMonitorService(profiles, registry,
+                context, settings, new ProviderWorkerClient(baseDirectory));
             Application application = new Application();
             application.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
@@ -300,6 +306,174 @@ namespace PeripheralBatteryDashboard
             }
         }
 
+        private static int RunProviderWorker(string baseDirectory, string[] args,
+            bool fixtureMode)
+        {
+            PrepareConsoleEncoding();
+            if (args == null || args.Length != 2)
+                return 64;
+            int parentProcessId;
+            if (!int.TryParse(args[1], out parentProcessId) || parentProcessId <= 0)
+                return 64;
+            StartParentExitWatchdog(parentProcessId);
+
+            string requestText = ReadBoundedConsoleLine(
+                ProviderWorkerProtocol.MaximumMessageCharacters);
+            ProviderWorkerRequest request;
+            if (!ProviderWorkerProtocol.TryDeserializeRequest(requestText, out request))
+                return 65;
+            if (!ProviderWorkerSafety.IsSafeHidWorkerProfile(request.Profile))
+                return 66;
+            DeviceProfile profile = request.Profile;
+
+            if (fixtureMode)
+            {
+                object fixtureOption;
+                string fixtureBehavior = profile.ProviderOptions != null &&
+                    profile.ProviderOptions.TryGetValue("FixtureBehavior", out fixtureOption)
+                    ? Convert.ToString(fixtureOption)
+                    : profile.Id;
+                if (string.Equals(fixtureBehavior, "hang",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fixtureBehavior, "fixture.hang",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    Thread.Sleep(Timeout.Infinite);
+                    return 70;
+                }
+                if (string.Equals(fixtureBehavior, "malformed",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fixtureBehavior, "fixture.malformed",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine("fixture-malformed-output");
+                    return 0;
+                }
+                if (string.Equals(fixtureBehavior, "exit",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fixtureBehavior, "fixture.exit",
+                    StringComparison.OrdinalIgnoreCase))
+                    return 72;
+                if (string.Equals(fixtureBehavior, "flood",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fixtureBehavior, "fixture.flood",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.Write(new string('X',
+                        ProviderWorkerProtocol.MaximumMessageCharacters + 4096));
+                    return 0;
+                }
+                BatteryReading fixture = new BatteryReading
+                {
+                    ProfileId = profile.Id,
+                    DisplayName = "fixture",
+                    Category = "other",
+                    Percent = 61,
+                    Band = BatteryLevelBand.High,
+                    Connection = DeviceConnectionState.Connected,
+                    Charge = DeviceChargeState.Discharging,
+                    StatusText = "연결됨",
+                    DetailText = "worker fixture",
+                    SampledAtUtc = DateTime.UtcNow
+                };
+                Console.WriteLine(ProviderWorkerProtocol.SerializeResponse(
+                    request.RequestId, fixture));
+                return 0;
+            }
+
+            ProviderRegistry registry = new ProviderRegistry();
+            BuiltInProviderCatalog.RegisterInto(registry);
+            IBatteryProvider provider;
+            BatteryReading reading;
+            if (!registry.TryGet(profile.ProviderId, out provider))
+            {
+                registry.LoadPlugins(Path.Combine(baseDirectory, "Plugins"));
+                if (!registry.TryGet(profile.ProviderId, out provider))
+                {
+                    reading = BatteryReading.Unavailable(profile,
+                        DeviceConnectionState.Unsupported,
+                        "지원 모듈 없음",
+                        "등록된 공급자를 찾지 못했습니다.",
+                        "provider-not-found");
+                }
+                else
+                {
+                    reading = ReadProviderInWorker(profile, provider);
+                }
+            }
+            else
+            {
+                reading = ReadProviderInWorker(profile, provider);
+            }
+            Console.WriteLine(ProviderWorkerProtocol.SerializeResponse(
+                request.RequestId, reading));
+            return 0;
+        }
+
+        private static BatteryReading ReadProviderInWorker(DeviceProfile profile,
+            IBatteryProvider provider)
+        {
+            try
+            {
+                BatteryReading reading = provider.ReadAsync(profile,
+                    new BatteryReadContext(new HidDeviceEnumerator()),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                return reading ?? BatteryReading.Unavailable(profile,
+                    DeviceConnectionState.Error,
+                    "조회 오류",
+                    "공급자가 상태를 반환하지 않았습니다.",
+                    "provider-null-reading");
+            }
+            catch
+            {
+                return BatteryReading.Unavailable(profile,
+                    DeviceConnectionState.Error,
+                    "조회 오류",
+                    "조회 보조 프로세스에서 공급자 호출이 실패했습니다.",
+                    "provider-worker-exception");
+            }
+        }
+
+        private static string ReadBoundedConsoleLine(int maximumCharacters)
+        {
+            StringBuilder value = new StringBuilder(Math.Min(maximumCharacters, 4096));
+            while (value.Length <= maximumCharacters)
+            {
+                int next = Console.In.Read();
+                if (next < 0 || next == '\n')
+                    return value.ToString().TrimEnd('\r');
+                value.Append((char)next);
+            }
+            return null;
+        }
+
+        private static void StartParentExitWatchdog(int parentProcessId)
+        {
+            Thread watchdog = new Thread(new ThreadStart(delegate
+            {
+                try
+                {
+                    using (Process parent = Process.GetProcessById(parentProcessId))
+                    {
+                        parent.WaitForExit();
+                    }
+                    Environment.Exit(90);
+                }
+                catch (ArgumentException)
+                {
+                    Environment.Exit(90);
+                }
+                catch
+                {
+                    // The parent still owns the normal timeout/kill path. An access
+                    // failure here must not interfere with the battery read itself.
+                }
+            }));
+            watchdog.IsBackground = true;
+            watchdog.Name = "provider-parent-watchdog";
+            watchdog.Start();
+        }
+
         private static void CreateServices(string baseDirectory,
             out ProfileStore profileStore,
             out ProviderRegistry registry,
@@ -328,6 +502,8 @@ namespace PeripheralBatteryDashboard
                    string.Equals(mode, "--inventory", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(mode, "--snapshot", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(mode, "--diagnostics", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mode, "--provider-worker", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mode, "--provider-worker-fixture", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(mode, "--version", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(mode, "--help", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(mode, "-h", StringComparison.OrdinalIgnoreCase) ||
