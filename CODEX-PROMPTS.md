@@ -1,13 +1,15 @@
 # Codex 작업 프롬프트
 
-이 문서는 Peripheral Battery Dashboard를 설치하거나 내 기기에 맞게 조정할 때 Codex 또는 다른 코딩 LLM에 전달할 수 있는 프롬프트 모음입니다.
+이 문서는 Peripheral Battery Dashboard의 설치·업데이트·제거와 기기별 조정을 로컬 Codex 또는 다른 코딩 에이전트에 맡길 때 전달하는 프롬프트 모음입니다. 사용자가 저장소 복제, ZIP 해제, 빌드와 설치 파일 배치를 직접 수행하는 흐름은 전제하지 않습니다.
+
+공식 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
 ## 사용 방법
 
-1. 저장소를 로컬 Windows PC에 내려받거나 복제합니다.
-2. 로컬 셸과 저장소 파일을 사용할 수 있는 Codex 또는 코딩 에이전트에서 저장소 폴더를 엽니다.
-3. 아래에서 목적에 맞는 프롬프트 하나를 골라 **코드 블록 전체를 복사해 전달**합니다.
-4. 괄호로 표시한 기기 정보만 실제 값으로 바꿉니다.
+1. 설치할 Windows PC에서 로컬 셸과 파일을 사용할 수 있는 Codex 또는 코딩 에이전트를 엽니다.
+2. 아래에서 목적에 맞는 프롬프트 하나를 골라 **코드 블록 전체를 복사해 전달**합니다. 저장소는 에이전트가 승인 후 확보하므로 사용자가 먼저 내려받을 필요가 없습니다.
+3. 괄호로 표시한 기기 정보만 실제 값으로 바꿉니다.
+4. 에이전트가 설명하는 다운로드·설치·저장소 밖 쓰기·레지스트리/자동 실행 변경·실기기 I/O의 대상과 영향을 확인하고 필요한 단계만 승인합니다.
 
 LLM이 웹 채팅만 할 수 있고 로컬 파일·Windows 장치에 접근할 수 없다면 실제 설치나 USB 동글 확인은 수행할 수 없습니다. 이 경우 에이전트가 제시하는 명령을 무조건 실행하지 말고, 로컬 접근이 가능한 코딩 환경에서 다시 진행하세요.
 
@@ -16,17 +18,19 @@ LLM이 웹 채팅만 할 수 있고 로컬 파일·Windows 장치에 접근할 �
 ## 1. 처음 설치하고 호환성 확인
 
 ```text
-이 로컬 저장소의 Peripheral Battery Dashboard를 내 Windows PC에 안전하게 설치하고 내 주변기기의 호환성을 확인해 줘.
+Peripheral Battery Dashboard를 내 Windows PC에 안전하게 설치하고 내 주변기기의 호환성을 확인해 줘. 내가 저장소를 직접 복제하거나 ZIP을 내려받아 압축 해제하고, 소스를 빌드하거나 설치 파일을 배치하도록 넘기지 말고 네가 승인 경계를 지키며 전체 설치를 수행해라.
 
-먼저 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 모두 읽어라. 이후 다음을 지켜라.
+대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
+
+대상 저장소가 로컬에 없으면 정확한 복제 위치와 네트워크·파일 변경을 설명하고 내 승인을 받은 뒤 복제한다. 이미 로컬에 있으면 origin URL과 Git 상태를 확인하고 사용자 변경을 보존한다. 저장소를 확보한 다음 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 모두 읽어라. 이후 다음을 지켜라.
 
 - 시작할 때는 읽기 전용으로 Git 상태, Windows 10/11 x64 여부, .NET Framework 4.8, 필요한 VS 2022 Build Tools를 확인하고 실행 계획을 요약한다.
-- 기존 빌드 산출물과 소스 빌드 중 검증 가능한 방법을 선택한다. 다운로드나 소프트웨어 설치, 저장소 밖 쓰기, 레지스트리 및 자동 실행 변경 전에 정확한 대상과 영향을 설명하고 내 승인을 받는다. GUI 첫 실행은 기본 자동 실행을 등록할 수 있으므로 먼저 알린다.
+- 공식 Release 배포본과 소스 빌드 중 검증 가능한 방법을 선택한다. Release를 받으면 공식 자산의 SHA-256을 `SHA256SUMS.txt`와 비교하고 불일치하면 압축 해제·실행을 중단한다. 다운로드나 소프트웨어 설치, 저장소 밖의 안정된 앱 폴더 쓰기, 레지스트리 및 자동 실행 변경 전에 정확한 대상과 영향을 설명하고 내 승인을 받는다. 관리자 권한을 요구하지 않는다. GUI 첫 실행은 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PeripheralBatteryDashboard` 자동 실행 값과 실행 명령을 설명하고 별도 승인 후 수행하며, 미승인 상태에서는 GUI와 레지스트리를 변경하지 않는다.
 - 빌드한다면 별도 출력 폴더를 쓰고 PeripheralBatteryDashboard.Diagnostics.exe --self-test를 실행한다.
 - 내 장치를 확인할 때 앱의 redacted --diagnostics를 우선 사용하되, --diagnostics와 --snapshot은 매칭된 기존 공급자의 검증된 배터리 요청을 실제 장치에 보낼 수 있음을 먼저 설명한다. 장치 시리얼, 전체 장치 경로, 사용자명, Bluetooth 주소, 토큰을 출력·업로드·커밋하지 않는다.
 - 알 수 없는 HID interrupt/output/Feature write, 무작위 바이트, 명령 스캔이나 퍼징은 절대 사용하지 않는다. 검증된 읽기 전용 배터리 요청만 허용한다.
 - 내 기기가 현재 지원되지 않으면 억지로 값을 추정하지 말고, JSON 프로필만 필요한지 새 공급자 플러그인이 필요한지 근거와 함께 분류한다.
-- 완료 시 설치 위치, 변경 파일, 빌드와 자체 테스트 결과, 실제로 확인한 기기, 남은 제약 및 승인할 다음 단계를 보고한다. 내 요청 없이 커밋·푸시·GitHub 릴리스를 하지 않는다.
+- 완료 시 저장소 획득 방식과 commit 또는 Release SHA-256, 설치 위치, 관리자 권한 사용 여부, 변경 파일, 빌드와 --self-test 종료 코드, 자동 실행 승인과 실제 레지스트리 결과, live diagnostics 실행 여부와 ProviderId, 새 HID write 전송 여부, 실제로 확인한 기기, 남은 제약과 다음 승인 단계를 보고한다. 내 요청 없이 커밋·푸시·GitHub 릴리스를 하지 않는다.
 
 내 기기:
 - 제품명: [제품명]
@@ -38,6 +42,8 @@ LLM이 웹 채팅만 할 수 있고 로컬 파일·Windows 장치에 접근할 �
 
 ```text
 이 저장소와 Peripheral Battery Dashboard를 사용해 다음 기기가 표시되지 않거나 배터리 값이 잘못되는 원인을 진단해 줘. 이번 요청은 진단만이며 소스, 사용자 프로필, 레지스트리, 자동 실행, 드라이버와 설치 상태를 변경하지 마라.
+
+대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
 먼저 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 읽어라. Git 상태와 앱 버전을 확인하고 장치 I/O가 없는 --self-test를 먼저 실행한다. --diagnostics와 --snapshot은 매칭된 기존 공급자의 검증된 요청을 실제 장치에 보낼 수 있으므로 수동 파일 검사처럼 표현하지 말고, 실행 전에 대상 ProviderId와 동작을 알린 뒤 필요한 경우에만 사용한다. 제조사 프로그램의 장치 독점, 절전, 연결 방식, VID/PID, 인터페이스와 Usage, 선택된 ProviderId를 점검하되 장치 시리얼과 전체 경로, 사용자명, Bluetooth 주소 같은 식별 정보는 결과에 노출하지 마라.
 
@@ -57,6 +63,8 @@ LLM이 웹 채팅만 할 수 있고 로컬 파일·Windows 장치에 접근할 �
 ```text
 이 Peripheral Battery Dashboard 저장소에 [새 기기명/하드웨어 리비전] 호환성을 추가해 줘. 이 기기는 [기존 지원 기기명 또는 ProviderId]와 같은 배터리 프로토콜을 사용한다는 다음 근거가 있다: [제조사 문서/검토 가능한 캡처/기존 구현의 위치와 설명].
 
+대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
+
 먼저 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md와 현재 builtin.devices.json 및 해당 공급자 코드를 읽어라. 근거가 충분한지 검토하고, VID/PID뿐 아니라 인터페이스 번호, Usage Page, Usage를 redacted diagnostics로 확인한다. 근거가 부족하면 어떤 장치 명령도 보내지 말고 중단한다.
 
 로컬 한 대만을 위한 변경이면 기본 프로필을 수정하지 말고 완전한 사용자 JSON 프로필을 만들어 가져오는 방법을 제시한다. 내가 명시적으로 업스트림 소스 반영을 요청한 경우에만 최소 범위로 기본 프로필과 테스트/문서를 수정한다. 매칭 범위를 넓히거나 와일드카드로 다른 장치까지 잡지 마라.
@@ -74,6 +82,8 @@ LLM이 웹 채팅만 할 수 있고 로컬 파일·Windows 장치에 접근할 �
 
 ```text
 이 Peripheral Battery Dashboard 저장소에서 [제품명]의 [2.4GHz USB 동글/기타 HID 연결] 배터리 지원 가능성을 안전하게 검토하고, 증거가 충분한 경우에만 별도 IBatteryProvider 플러그인으로 구현해 줘.
+
+대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
 작업 전에 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md, Plugins/README.md, Plugins/SamplePlugin.cs.txt와 기존 공급자 구조를 모두 읽어라.
 

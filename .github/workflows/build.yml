@@ -17,15 +17,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build release
-        shell: powershell
+        shell: pwsh
         run: .\build.ps1 -Configuration Release -OutputDirectory dist-ci
 
       - name: Run self-test
-        shell: powershell
+        shell: pwsh
         run: .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --self-test
 
       - name: Create portable ZIP
-        shell: powershell
+        shell: pwsh
         run: .\tools\package-release.ps1 -InputDirectory dist-ci -OutputDirectory artifacts -Version 1.0.4
 
       - name: Upload portable build
