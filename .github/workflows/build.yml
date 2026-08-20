@@ -39,6 +39,9 @@ jobs:
           if ($LASTEXITCODE -ne 64) {
             throw "Unknown option must exit 64, got $LASTEXITCODE."
           }
+          # The expected native exit code remains in LASTEXITCODE even after the
+          # assertion succeeds, so explicitly finish this validation step cleanly.
+          exit 0
 
       - name: Validate passive inventory schema
         shell: pwsh
