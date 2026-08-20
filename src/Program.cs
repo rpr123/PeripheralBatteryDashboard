@@ -310,6 +310,16 @@ namespace PeripheralBatteryDashboard
             bool fixtureMode)
         {
             PrepareConsoleEncoding();
+            try
+            {
+                // CREATE_NO_WINDOW has no console code page to inherit. Decode the
+                // redirected request deterministically before Console.In is opened.
+                Console.InputEncoding = new UTF8Encoding(false);
+            }
+            catch
+            {
+                // TryDeserializeRequest still rejects any undecodable input safely.
+            }
             if (args == null || args.Length != 2)
                 return 64;
             int parentProcessId;
@@ -318,7 +328,7 @@ namespace PeripheralBatteryDashboard
             StartParentExitWatchdog(parentProcessId);
 
             string requestText = ReadBoundedConsoleLine(
-                ProviderWorkerProtocol.MaximumMessageCharacters);
+                ProviderWorkerProtocol.MaximumMessageCharacters + 1);
             ProviderWorkerRequest request;
             if (!ProviderWorkerProtocol.TryDeserializeRequest(requestText, out request))
                 return 65;

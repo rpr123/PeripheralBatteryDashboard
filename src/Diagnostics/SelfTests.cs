@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -73,6 +74,11 @@ namespace PeripheralBatteryDashboard.Diagnostics
                     Convert.ToString(workerRoundTripRequest.Profile.ProviderOptions[
                         "한글-option"]) == "값",
                 "provider worker profile snapshot round trip");
+            Check(failures, ProviderWorkerProtocol.TryDeserializeRequest(
+                    "\uFEFF" + workerRequest, out workerRoundTripRequest) &&
+                    workerRoundTripRequest.RequestId == workerRequestId &&
+                    workerRoundTripRequest.Profile.Id == workerRoundTripProfile.Id,
+                "provider worker accepts one UTF-8 BOM");
             Check(failures, typeof(HidSession).GetMethod("OpenReadOnly",
                 BindingFlags.Public | BindingFlags.Static) != null,
                 "read-only HID session entry point");
@@ -253,7 +259,33 @@ namespace PeripheralBatteryDashboard.Diagnostics
             catch (InvalidOperationException) { duplicateRejected = true; }
             Check(failures, duplicateRejected, "duplicate provider rejection");
             CheckMonitorIsolation(failures);
-            CheckProviderWorkerIsolation(failures, baseDirectory);
+            Encoding originalInputEncoding = null;
+            bool inputEncodingChanged = false;
+            try
+            {
+                // .NET Framework's redirected StandardInput writer inherits this
+                // BOM-producing encoding on UTF-8 console hosts such as CI.
+                try
+                {
+                    originalInputEncoding = Console.InputEncoding;
+                    Console.InputEncoding = new UTF8Encoding(true);
+                    inputEncodingChanged = true;
+                }
+                catch
+                {
+                    // The GUI winexe has no console. Its hidden self-test entry
+                    // still exercises the worker with the process default.
+                }
+                CheckProviderWorkerIsolation(failures, baseDirectory);
+            }
+            finally
+            {
+                if (inputEncodingChanged)
+                {
+                    try { Console.InputEncoding = originalInputEncoding; }
+                    catch { }
+                }
+            }
 
             return failures;
         }
@@ -320,7 +352,8 @@ namespace PeripheralBatteryDashboard.Diagnostics
             BatteryReading nonzeroExit = client.ReadAsync(exitProfile,
                     CancellationToken.None).GetAwaiter().GetResult();
             Check(failures, nonzeroExit.Connection == DeviceConnectionState.Error &&
-                    nonzeroExit.ErrorCode == "provider-worker-exit",
+                    nonzeroExit.ErrorCode == "provider-worker-exit" &&
+                    nonzeroExit.DetailText.Contains("종료 코드: 72"),
                 "provider worker rejects a nonzero child exit");
 
             DeviceProfile floodProfile = WorkerProfile("fixture.flood",
@@ -396,6 +429,8 @@ namespace PeripheralBatteryDashboard.Diagnostics
             int deliveredEvents = 0;
             int timeoutEvents = 0;
             int hungConnectedEvents = 0;
+            int disposeReturned = 0;
+            int eventsStartedAfterDispose = 0;
             ManualResetEventSlim blockingSubscriberStarted =
                 new ManualResetEventSlim(false);
             ManualResetEventSlim releaseBlockingSubscriber =
@@ -411,6 +446,8 @@ namespace PeripheralBatteryDashboard.Diagnostics
             };
             monitor.ReadingUpdated += (sender, args) =>
             {
+                if (Volatile.Read(ref disposeReturned) != 0)
+                    Interlocked.Increment(ref eventsStartedAfterDispose);
                 Interlocked.Increment(ref deliveredEvents);
                 if (args != null && args.Reading != null &&
                     string.Equals(args.Reading.ProfileId, hungProfile.Id,
@@ -503,15 +540,15 @@ namespace PeripheralBatteryDashboard.Diagnostics
             Check(failures, Volatile.Read(ref hungConnectedEvents) == 1,
                 "late timed-out success is not published before the pending retry");
 
-            int beforeDisposeEvents = Volatile.Read(ref deliveredEvents);
             Stopwatch dispose = Stopwatch.StartNew();
             monitor.Dispose();
             dispose.Stop();
+            Volatile.Write(ref disposeReturned, 1);
             Thread.Sleep(100);
             lifetime.Stop();
             Check(failures, dispose.ElapsedMilliseconds < 1000,
                 "monitor disposal is bounded while native work is outstanding");
-            Check(failures, Volatile.Read(ref deliveredEvents) == beforeDisposeEvents,
+            Check(failures, Volatile.Read(ref eventsStartedAfterDispose) == 0,
                 "late provider completion does not publish after monitor disposal");
             Check(failures, lifetime.ElapsedMilliseconds < 5000,
                 "monitor isolation self-test remains bounded");

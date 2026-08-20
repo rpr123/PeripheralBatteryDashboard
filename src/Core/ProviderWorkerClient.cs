@@ -83,6 +83,8 @@ namespace PeripheralBatteryDashboard.Core
             out ProviderWorkerRequest request)
         {
             request = null;
+            if (!string.IsNullOrEmpty(input) && input[0] == '\uFEFF')
+                input = input.Substring(1);
             if (string.IsNullOrWhiteSpace(input) ||
                 input.Length > MaximumMessageCharacters)
                 return false;
@@ -323,7 +325,8 @@ namespace PeripheralBatteryDashboard.Core
                         return BatteryReading.Unavailable(profile,
                             DeviceConnectionState.Error,
                             "조회 보조 프로세스 오류",
-                            "장치 조회 프로세스가 비정상 종료되었습니다.",
+                            "장치 조회 프로세스가 비정상 종료되었습니다. 종료 코드: " +
+                                process.ExitCode.ToString(CultureInfo.InvariantCulture),
                             "provider-worker-exit");
                     }
 
