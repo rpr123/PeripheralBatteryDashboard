@@ -1,0 +1,55 @@
+name: New device support
+description: Request support for a peripheral that is not detected yet.
+title: "[Device] "
+labels: [device-support]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not post a device serial number or a full Windows HID device path.
+        Unknown HID commands and command fuzzing are not accepted.
+  - type: input
+    id: device
+    attributes:
+      label: Manufacturer and exact model
+      placeholder: Example Brand Model, including hardware revision
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection method
+      options:
+        - 2.4 GHz USB dongle
+        - Bluetooth
+        - USB cable
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: Leave blank if unknown.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste Diagnostics output. Remove serial numbers and full device paths first.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Battery protocol evidence
+      description: Official documentation, open-source implementation, or a read-only capture. Do not attach private vendor software.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed serial numbers and full device paths.
+          required: true
+        - label: I understand that a new dongle protocol may require manual research and cannot be inferred from VID/PID alone.
+          required: true

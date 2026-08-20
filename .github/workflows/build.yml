@@ -1,0 +1,36 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build release
+        shell: powershell
+        run: .\build.ps1 -Configuration Release -OutputDirectory dist-ci
+
+      - name: Run self-test
+        shell: powershell
+        run: .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --self-test
+
+      - name: Create portable ZIP
+        shell: powershell
+        run: .\tools\package-release.ps1 -InputDirectory dist-ci -OutputDirectory artifacts -Version 1.0.4
+
+      - name: Upload portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: PeripheralBatteryDashboard-v1.0.4-win-x64
+          path: artifacts/*
+          if-no-files-found: error

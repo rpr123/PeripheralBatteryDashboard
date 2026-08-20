@@ -1,0 +1,90 @@
+{
+  "SchemaVersion": 1,
+  "Profiles": [
+    {
+      "Id": "steelseries.arctis-nova-7-gen2",
+      "DisplayName": "Arctis Nova 7 Gen 2",
+      "Category": "headset",
+      "Icon": "headset",
+      "ProviderId": "builtin.steelseries.nova7",
+      "Enabled": true,
+      "DisplayOrder": 10,
+      "PollSeconds": 30,
+      "TimeoutMilliseconds": 1500,
+      "LowBatteryPercent": 20,
+      "Match": {
+        "Transport": "hid",
+        "VendorId": "0x1038",
+        "ProductIds": ["0x227E"],
+        "InterfaceNumber": 3,
+        "UsagePage": "0xFFC0",
+        "Usage": "0x0001"
+      },
+      "ProviderOptions": {}
+    },
+    {
+      "Id": "aula.f108-pro",
+      "DisplayName": "AULA F108 Pro",
+      "Category": "keyboard",
+      "Icon": "keyboard",
+      "ProviderId": "builtin.aula.f108",
+      "Enabled": true,
+      "DisplayOrder": 20,
+      "PollSeconds": 30,
+      "TimeoutMilliseconds": 1500,
+      "LowBatteryPercent": 20,
+      "Match": {
+        "Transport": "hid",
+        "VendorId": "0x05AC",
+        "ProductIds": ["0x024F"],
+        "InterfaceNumber": 3,
+        "UsagePage": "0xFF60",
+        "Usage": "0x0061"
+      },
+      "ProviderOptions": {}
+    },
+    {
+      "Id": "vxe.r1-se-plus",
+      "DisplayName": "VXE R1 SE+",
+      "Category": "mouse",
+      "Icon": "mouse",
+      "ProviderId": "builtin.vxe.r1",
+      "Enabled": true,
+      "DisplayOrder": 30,
+      "PollSeconds": 30,
+      "TimeoutMilliseconds": 1500,
+      "LowBatteryPercent": 20,
+      "Match": {
+        "Transport": "hid",
+        "VendorId": "0x373B",
+        "ProductIds": ["0x1085"],
+        "InterfaceNumber": 1,
+        "UsagePage": "0xFF02",
+        "Usage": "0x0002"
+      },
+      "ProviderOptions": {}
+    },
+    {
+      "Id": "microsoft.xbox-wireless-controller",
+      "DisplayName": "Xbox Wireless Controller",
+      "Category": "gamepad",
+      "Icon": "gamepad",
+      "ProviderId": "builtin.xbox.xinput",
+      "Enabled": true,
+      "DisplayOrder": 40,
+      "PollSeconds": 30,
+      "TimeoutMilliseconds": 1000,
+      "LowBatteryPercent": 20,
+      "Match": {
+        "Transport": "xinput",
+        "VendorId": "0x045E",
+        "ProductIds": ["0x0B13"],
+        "InterfaceNumber": null,
+        "UsagePage": "",
+        "Usage": "",
+        "XInputUserIndex": null
+      },
+      "ProviderOptions": {}
+    }
+  ]
+}

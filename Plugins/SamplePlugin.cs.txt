@@ -1,0 +1,74 @@
+// Peripheral Battery Dashboard plugin skeleton
+//
+// 1. Copy this file to SamplePlugin.cs.
+// 2. Give PluginId and ProviderId globally unique values.
+// 3. Implement only a documented and verified battery query protocol.
+// 4. Compile as a DLL referencing PeripheralBatteryDashboard.Runtime.dll.
+
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using PeripheralBatteryDashboard.Core;
+using PeripheralBatteryDashboard.Hardware;
+
+namespace PeripheralBatteryDashboard.SamplePlugin
+{
+    public sealed class SamplePlugin : IBatteryProviderPlugin
+    {
+        public string PluginId
+        {
+            get { return "example.sample-plugin"; }
+        }
+
+        public IEnumerable<IBatteryProvider> CreateProviders()
+        {
+            yield return new SampleBatteryProvider();
+        }
+    }
+
+    public sealed class SampleBatteryProvider : IBatteryProvider
+    {
+        public string ProviderId
+        {
+            get { return "example.sample-battery"; }
+        }
+
+        public Task<BatteryReading> ReadAsync(
+            DeviceProfile profile,
+            BatteryReadContext context,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            HidDeviceDescriptor device = context.HidDevices.Find(profile);
+            if (device == null)
+            {
+                return Task.FromResult(BatteryReading.Unavailable(
+                    profile,
+                    DeviceConnectionState.Disconnected,
+                    "장치 연결 안 됨",
+                    "프로필의 VID/PID, 인터페이스와 Usage를 확인하세요.",
+                    "not-found"));
+            }
+
+            // Intentionally no HID packet is sent by this skeleton.
+            // A real provider should:
+            //   * open exactly the descriptor selected above with HidSession.Open(device),
+            //   * send only a documented read-only status command,
+            //   * pass cancellationToken and profile.EffectiveTimeoutMilliseconds,
+            //   * validate report ID, length, header, checksum and 0..100 range,
+            //   * return a BatteryReading with the real sampled value,
+            //   * wrap HidSession in a using block.
+            //
+            // Do not probe random output or feature reports. Those commands can change
+            // keymaps, DPI, pairing or firmware state on some devices.
+            return Task.FromResult(BatteryReading.Unavailable(
+                profile,
+                DeviceConnectionState.Unsupported,
+                "예제 공급자",
+                "검증된 배터리 조회 프로토콜을 ReadAsync에 구현하세요. 발견 장치: " + device.SafeIdentity,
+                "example-not-implemented"));
+        }
+    }
+}
+
