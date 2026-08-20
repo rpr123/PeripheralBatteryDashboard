@@ -24,13 +24,80 @@ jobs:
         shell: pwsh
         run: .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --self-test
 
+      - name: Validate non-interactive command surface
+        shell: pwsh
+        run: |
+          $version = .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --version
+          if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne '1.1.0.0') {
+            throw 'Unexpected executable version.'
+          }
+          $help = .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --help
+          if ($LASTEXITCODE -ne 0 -or ($help -join "`n") -notmatch '--inventory') {
+            throw 'Inventory command is not advertised.'
+          }
+          .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --unknown-ci-option
+          if ($LASTEXITCODE -ne 64) {
+            throw "Unknown option must exit 64, got $LASTEXITCODE."
+          }
+          # The expected native exit code remains in LASTEXITCODE even after the
+          # assertion succeeds, so explicitly finish this validation step cleanly.
+          exit 0
+
+      - name: Validate passive inventory schema
+        shell: pwsh
+        run: |
+          $forbiddenCalls = Select-String -Path .\src\Diagnostics\InventoryService.cs `
+            -Pattern '\b(HidSession|ReadInputReportAsync|WriteInterruptAsync|SetOutputReport|SetFeature|GetFeature|ProviderRegistry|ReadOnceAsync)\b'
+          if ($forbiddenCalls) {
+            throw 'Passive inventory contains a forbidden provider/report-I/O call.'
+          }
+          $hidSource = Get-Content .\src\Hardware\HidDevice.cs -Raw
+          $metadataEnumerator = [regex]::Match($hidSource,
+            '(?s)INVENTORY_METADATA_ENUMERATOR_BEGIN(?<body>.*?)INVENTORY_METADATA_ENUMERATOR_END')
+          if (-not $metadataEnumerator.Success) {
+            throw 'HID metadata enumerator safety markers are missing.'
+          }
+          $forbiddenMetadataCalls = [regex]::Matches($metadataEnumerator.Groups['body'].Value,
+            '\b(HidSession|ReadFile|WriteFile|HidD_GetFeature|HidD_SetFeature|HidD_SetOutputReport)\b')
+          if ($forbiddenMetadataCalls.Count -ne 0) {
+            throw 'HID metadata enumerator contains a forbidden report-I/O call.'
+          }
+          $raw = .\dist-ci\PeripheralBatteryDashboard.Diagnostics.exe --inventory
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inventory failed with exit code $LASTEXITCODE."
+          }
+          $inventory = $raw | ConvertFrom-Json
+          if ($inventory.schemaVersion -ne 1 -or $inventory.mode -ne 'metadata-only') {
+            throw 'Unexpected inventory schema.'
+          }
+          if ($inventory.complete -ne $true -or $inventory.providerBatteryRequestsSent -ne $false -or
+              $inventory.profileWarningCount -ne 0) {
+            throw 'Inventory must not invoke battery providers.'
+          }
+          if ($inventory.coverage.hidCollections -ne $true -or
+              $inventory.coverage.bluetoothStandardBatteryServices -ne $true -or
+              $inventory.coverage.xinputOnlyDevices -ne $false -or
+              $inventory.coverage.bluetoothNonHidDevices -ne $false -or
+              $inventory.coverage.audioOnlyDevices -ne $false) {
+            throw 'Unexpected inventory coverage declaration.'
+          }
+          if ($inventory.privacy.friendlyNamesBestEffortRedacted -ne $true -or
+              $inventory.privacy.externalSearchRequiresLocalReview -ne $true -or
+              $inventory.privacy.deviceGroupIdsArePseudonymousLocalIdentifiers -ne $true -or
+              $inventory.privacy.bluetoothServiceIdsArePseudonymousLocalIdentifiers -ne $true) {
+            throw 'Inventory privacy declaration is missing.'
+          }
+          if ($raw -match 'devicePath|serialNumber|instanceId|bluetoothAddress') {
+            throw 'Inventory contains a forbidden identifier field.'
+          }
+
       - name: Create portable ZIP
         shell: pwsh
-        run: .\tools\package-release.ps1 -InputDirectory dist-ci -OutputDirectory artifacts -Version 1.0.4
+        run: .\tools\package-release.ps1 -InputDirectory dist-ci -OutputDirectory artifacts -Version 1.1.0
 
       - name: Upload portable build
         uses: actions/upload-artifact@v4
         with:
-          name: PeripheralBatteryDashboard-v1.0.4-win-x64
+          name: PeripheralBatteryDashboard-v1.1.0-win-x64
           path: artifacts/*
           if-no-files-found: error

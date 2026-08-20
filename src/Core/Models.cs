@@ -26,6 +26,13 @@ namespace PeripheralBatteryDashboard.Core
         NotApplicable
     }
 
+    public enum DevicePresenceState
+    {
+        Unknown,
+        Present,
+        Absent
+    }
+
     public enum BatteryLevelBand
     {
         Unknown,
@@ -95,8 +102,10 @@ namespace PeripheralBatteryDashboard.Core
         public string VendorId { get; set; }
         public List<string> ProductIds { get; set; }
         public int? InterfaceNumber { get; set; }
+        public bool RequireNoInterfaceNumber { get; set; }
         public string UsagePage { get; set; }
         public string Usage { get; set; }
+        public string BluetoothServiceId { get; set; }
         public int? XInputUserIndex { get; set; }
 
         public DeviceMatch()
@@ -106,6 +115,7 @@ namespace PeripheralBatteryDashboard.Core
             ProductIds = new List<string>();
             UsagePage = string.Empty;
             Usage = string.Empty;
+            BluetoothServiceId = string.Empty;
         }
 
         public ushort? ParsedVendorId
@@ -137,6 +147,28 @@ namespace PeripheralBatteryDashboard.Core
         {
             get { return HexValue.TryParseUInt16(Usage); }
         }
+
+        public bool HasValidBluetoothServiceId
+        {
+            get
+            {
+                const string prefix = "bt-bas-";
+                if (string.IsNullOrWhiteSpace(BluetoothServiceId) ||
+                    BluetoothServiceId.Length != prefix.Length + 24 ||
+                    !BluetoothServiceId.StartsWith(prefix,
+                        StringComparison.OrdinalIgnoreCase))
+                    return false;
+                for (int index = prefix.Length; index < BluetoothServiceId.Length; index++)
+                {
+                    char value = BluetoothServiceId[index];
+                    if (!((value >= '0' && value <= '9') ||
+                          (value >= 'a' && value <= 'f') ||
+                          (value >= 'A' && value <= 'F')))
+                        return false;
+                }
+                return true;
+            }
+        }
     }
 
     public sealed class BatteryReading
@@ -154,6 +186,14 @@ namespace PeripheralBatteryDashboard.Core
         public DateTime SampledAtUtc { get; set; }
         public bool IsStale { get; set; }
         public string ErrorCode { get; set; }
+        [System.Web.Script.Serialization.ScriptIgnore]
+        public DevicePresenceState Presence { get; set; }
+
+        [System.Web.Script.Serialization.ScriptIgnore]
+        public bool IsPresent
+        {
+            get { return Presence == DevicePresenceState.Present; }
+        }
 
         public BatteryReading()
         {
@@ -166,6 +206,7 @@ namespace PeripheralBatteryDashboard.Core
             StatusText = "확인 중";
             DetailText = string.Empty;
             ErrorCode = string.Empty;
+            Presence = DevicePresenceState.Unknown;
             SampledAtUtc = DateTime.UtcNow;
         }
 

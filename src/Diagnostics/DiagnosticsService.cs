@@ -31,6 +31,17 @@ namespace PeripheralBatteryDashboard.Diagnostics
             {
                 token.ThrowIfCancellationRequested();
                 IBatteryProvider provider;
+                if ((DeviceMonitorService.IsHidProfile(profile) ||
+                     ProviderSafetyPolicy.RequiresExactHidSelector(profile.ProviderId)) &&
+                    !DeviceMonitorService.HasExactHidSelector(profile))
+                {
+                    readings.Add(BatteryReading.Unavailable(profile,
+                        DeviceConnectionState.Unsupported,
+                        "정확한 HID 선택자 필요",
+                        "VID/PID, Usage Page/Usage와 MI 번호 또는 MI 없음의 명시가 필요합니다.",
+                        "broad-hid-selector-blocked"));
+                    continue;
+                }
                 if (!_registry.TryGet(profile.ProviderId, out provider))
                 {
                     readings.Add(BatteryReading.Unavailable(profile, DeviceConnectionState.Unsupported,
@@ -85,9 +96,17 @@ namespace PeripheralBatteryDashboard.Diagnostics
             text.AppendLine("Configured profiles");
             foreach (DeviceProfile profile in _profiles)
             {
-                string ids = string.Equals(profile.Match.Transport, "xinput", StringComparison.OrdinalIgnoreCase)
-                    ? "XInput"
-                    : (profile.Match.VendorId + ":" + string.Join(",", profile.Match.ProductIds.ToArray()));
+                string ids;
+                if (string.Equals(profile.Match.Transport, "xinput",
+                    StringComparison.OrdinalIgnoreCase))
+                    ids = "XInput";
+                else if (string.Equals(profile.Match.Transport, "bluetooth-gatt",
+                    StringComparison.OrdinalIgnoreCase) &&
+                    profile.Match.HasValidBluetoothServiceId)
+                    ids = "Bluetooth GATT local service ID";
+                else
+                    ids = profile.Match.VendorId + ":" +
+                        string.Join(",", profile.Match.ProductIds.ToArray());
                 text.AppendLine("- " + profile.Id + " | " + profile.ProviderId + " | " + ids);
             }
 

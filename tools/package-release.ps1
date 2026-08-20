@@ -2,7 +2,7 @@
 param(
     [string]$InputDirectory = 'dist',
     [string]$OutputDirectory = 'artifacts',
-    [string]$Version = '1.0.4'
+    [string]$Version = '1.1.0'
 )
 
 Set-StrictMode -Version Latest
@@ -48,6 +48,18 @@ foreach ($name in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $inputRoot $name))) {
         throw "Required release file is missing: $name"
     }
+}
+
+$builtInProfilePath = Join-Path $inputRoot 'Profiles\builtin.devices.json'
+$builtInProfileDocument = Get-Content -LiteralPath $builtInProfilePath -Raw | ConvertFrom-Json
+if ($builtInProfileDocument.SchemaVersion -ne 1 -or
+    @($builtInProfileDocument.Profiles).Count -ne 0) {
+    throw 'Public releases must contain a SchemaVersion 1 built-in profile document with zero active profiles.'
+}
+$shippedPluginProfiles = @(Get-ChildItem -LiteralPath (Join-Path $inputRoot 'Plugins') `
+    -Filter '*.devices.json' -File -Recurse)
+if ($shippedPluginProfiles.Count -ne 0) {
+    throw 'Public releases must not auto-register device profiles from Plugins.'
 }
 
 $diagnostics = Join-Path $inputRoot 'PeripheralBatteryDashboard.Diagnostics.exe'

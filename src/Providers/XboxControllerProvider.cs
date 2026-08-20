@@ -18,17 +18,83 @@ namespace PeripheralBatteryDashboard.Providers
 
         private static BatteryReading Read(DeviceProfile profile, CancellationToken token)
         {
-            int first = profile.Match.XInputUserIndex.HasValue ? profile.Match.XInputUserIndex.Value : 0;
-            int last = profile.Match.XInputUserIndex.HasValue ? first : 3;
             string bluetoothName = GetStringOption(profile, "BluetoothNameContains", null);
-            ushort vendorId = profile.Match != null && profile.Match.ParsedVendorId.HasValue
-                ? profile.Match.ParsedVendorId.Value
-                : (ushort)0x045E;
+            ushort? vendorId = profile.Match == null
+                ? null
+                : profile.Match.ParsedVendorId;
             List<ushort> productIds = profile.Match == null
                 ? new List<ushort>()
                 : profile.Match.ParsedProductIds;
-            if (productIds.Count == 0)
-                productIds.Add(0x0B13);
+
+            BluetoothGattBatteryReadResult bluetoothResult = null;
+            if (vendorId.HasValue && productIds.Count > 0)
+                bluetoothResult = BluetoothGattBatteryReader.ReadPercent(bluetoothName,
+                    vendorId, productIds, null, 0x02);
+            if (bluetoothResult != null &&
+                bluetoothResult.Status == BluetoothGattBatteryReadStatus.Success &&
+                bluetoothResult.Percent.HasValue)
+            {
+                return ProviderSupport.Connected(profile, bluetoothResult.Percent.Value,
+                    BatteryReading.BandFromPercent(bluetoothResult.Percent.Value),
+                    DeviceChargeState.Discharging,
+                    "연결됨",
+                    "Bluetooth LE GATT · exact VID/PID · 표준 Battery Level",
+                    false);
+            }
+            if (bluetoothResult != null &&
+                bluetoothResult.Status == BluetoothGattBatteryReadStatus.FoundUnavailable)
+            {
+                return PresentUnavailable(profile, DeviceConnectionState.Busy,
+                    "컨트롤러 배터리 조회 대기",
+                    "정확한 Bluetooth Battery Service는 감지됐지만 현재 값을 읽을 수 없습니다.",
+                    "controller-battery-read-unavailable");
+            }
+            if (bluetoothResult != null &&
+                bluetoothResult.Status == BluetoothGattBatteryReadStatus.Ambiguous)
+            {
+                return PresentUnavailable(profile, DeviceConnectionState.Error,
+                    "컨트롤러 구분 필요",
+                    "같은 조건의 Battery Service가 " + bluetoothResult.CandidateCount +
+                    "개 감지됐습니다.",
+                    "controller-battery-service-ambiguous");
+            }
+            if (bluetoothResult != null &&
+                bluetoothResult.Status == BluetoothGattBatteryReadStatus.EnumerationUnavailable)
+            {
+                if (bluetoothResult.CandidateCount > 0)
+                {
+                    return PresentUnavailable(profile, DeviceConnectionState.Error,
+                        "Bluetooth 열거 불완전",
+                        "정확한 컨트롤러 서비스는 감지됐지만 다른 후보를 완전히 확인하지 못해 값을 읽지 않았습니다.",
+                        "controller-battery-enumeration-unavailable");
+                }
+                return BatteryReading.Unavailable(profile,
+                    DeviceConnectionState.Error,
+                    "Bluetooth 열거 불완전",
+                    "Windows에서 Battery Service 목록을 완전히 확인하지 못했습니다.",
+                    "controller-battery-enumeration-unavailable");
+            }
+
+            bool allowUnboundXInput = AllowsUnboundXInput(profile);
+            if (!allowUnboundXInput)
+            {
+                if (!HasExactGattIdentity(profile))
+                {
+                    return BatteryReading.Unavailable(profile,
+                        DeviceConnectionState.Unsupported,
+                        "정확한 컨트롤러 식별자 필요",
+                        "Bluetooth GATT 조회에는 프로필의 exact VID/PID가 필요합니다.",
+                        "exact-controller-identity-required");
+                }
+                return BatteryReading.Unavailable(profile,
+                    DeviceConnectionState.Disconnected,
+                    "컨트롤러 연결 안 됨",
+                    "정확히 일치하는 Bluetooth Battery Service가 현재 감지되지 않았습니다.",
+                    "exact-controller-not-found");
+            }
+
+            int first = profile.Match.XInputUserIndex.Value;
+            int last = first;
             for (int index = first; index <= last; index++)
             {
                 token.ThrowIfCancellationRequested();
@@ -60,18 +126,6 @@ namespace PeripheralBatteryDashboard.Providers
                      info.BatteryType == XInputNative.BATTERY_TYPE_NIMH))
                 {
                     return FromXInputLevel(profile, info, index);
-                }
-
-                int bluetoothPercent;
-                if (BluetoothGattBatteryReader.TryReadPercent(bluetoothName, vendorId,
-                    productIds, out bluetoothPercent))
-                {
-                    return ProviderSupport.Connected(profile, bluetoothPercent,
-                        BatteryReading.BandFromPercent(bluetoothPercent),
-                        DeviceChargeState.Discharging,
-                        "연결됨",
-                        "Bluetooth LE GATT · 표준 Battery Level · XInput 슬롯 " + index,
-                        false);
                 }
 
                 return ProviderSupport.Connected(profile, null, BatteryLevelBand.Unknown,
@@ -114,6 +168,43 @@ namespace PeripheralBatteryDashboard.Providers
                     return text;
             }
             return defaultValue;
+        }
+
+        internal static bool GetBoolOption(DeviceProfile profile, string key, bool defaultValue)
+        {
+            object value;
+            if (profile != null && profile.ProviderOptions != null &&
+                profile.ProviderOptions.TryGetValue(key, out value) && value != null)
+            {
+                bool parsed;
+                if (bool.TryParse(Convert.ToString(value), out parsed))
+                    return parsed;
+            }
+            return defaultValue;
+        }
+
+        internal static bool AllowsUnboundXInput(DeviceProfile profile)
+        {
+            return profile != null && profile.Match != null &&
+                   profile.Match.XInputUserIndex.HasValue &&
+                   GetBoolOption(profile, "AllowUnboundXInput", false);
+        }
+
+        internal static bool HasExactGattIdentity(DeviceProfile profile)
+        {
+            return profile != null && profile.Match != null &&
+                   profile.Match.ParsedVendorId.HasValue &&
+                   profile.Match.ParsedProductIds.Count > 0;
+        }
+
+        private static BatteryReading PresentUnavailable(DeviceProfile profile,
+            DeviceConnectionState connection, string status, string detail,
+            string errorCode)
+        {
+            BatteryReading reading = BatteryReading.Unavailable(profile, connection,
+                status, detail, errorCode);
+            reading.Presence = DevicePresenceState.Present;
+            return reading;
         }
 
     }

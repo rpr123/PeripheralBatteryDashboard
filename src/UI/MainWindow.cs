@@ -29,6 +29,9 @@ namespace PeripheralBatteryDashboard.UI
         private TextBlock _summaryText;
         private TextBlock _lastUpdatedText;
         private TextBlock _footerText;
+        private UniformGrid _cardsPanel;
+        private Border _emptyStateHost;
+        private TextBlock _emptyStateText;
         private CheckBox _startupCheckBox;
         private bool _monitorStarted;
         private bool _syncingStartupCheckBox;
@@ -214,7 +217,7 @@ namespace PeripheralBatteryDashboard.UI
             summaryCard.Padding = new Thickness(17, 12, 17, 12);
             layout.Children.Add(summaryCard);
 
-            UniformGrid cardsPanel = new UniformGrid
+            _cardsPanel = new UniformGrid
             {
                 Columns = _profiles.Count <= 1 ? 1 : 2,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -224,20 +227,28 @@ namespace PeripheralBatteryDashboard.UI
             {
                 DeviceCardView card = new DeviceCardView(profile);
                 _cards[profile.Id] = card;
-                cardsPanel.Children.Add(card.Root);
+                _cardsPanel.Children.Add(card.Root);
             }
 
-            if (_profiles.Count == 0)
-            {
-                TextBlock empty = UiFactory.Text("활성화된 장치 프로필이 없습니다. 장치 관리에서 프로필을 가져오세요.", 15, UiFactory.SecondaryText, FontWeights.Normal);
-                empty.HorizontalAlignment = HorizontalAlignment.Center;
-                empty.Margin = new Thickness(20, 70, 20, 70);
-                cardsPanel.Children.Add(empty);
-            }
+            Grid cardsHost = new Grid();
+            cardsHost.Children.Add(_cardsPanel);
+
+            _emptyStateText = UiFactory.Text(
+                _profiles.Count == 0
+                    ? "등록된 장치가 없습니다. 설치 에이전트가 이 PC의 장치를 조사해 등록해야 합니다."
+                    : "지원 장치를 찾고 있습니다.",
+                15, UiFactory.SecondaryText, FontWeights.Normal);
+            _emptyStateText.HorizontalAlignment = HorizontalAlignment.Center;
+            _emptyStateText.TextAlignment = TextAlignment.Center;
+            _emptyStateText.TextWrapping = TextWrapping.Wrap;
+            _emptyStateText.Margin = new Thickness(20, 58, 20, 58);
+            _emptyStateHost = UiFactory.Card(_emptyStateText, new Thickness(6));
+            _emptyStateHost.VerticalAlignment = VerticalAlignment.Top;
+            cardsHost.Children.Add(_emptyStateHost);
 
             ScrollViewer scroller = new ScrollViewer
             {
-                Content = cardsPanel,
+                Content = cardsHost,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 Padding = new Thickness(0, 0, 7, 0)
@@ -493,10 +504,26 @@ namespace PeripheralBatteryDashboard.UI
                 return "Bluetooth / XInput" + slot;
             }
 
+            if (profile.Match != null && string.Equals(profile.Match.Transport,
+                "bluetooth-gatt", StringComparison.OrdinalIgnoreCase))
+            {
+                if (profile.Match.HasValidBluetoothServiceId)
+                    return "Bluetooth LE · 표준 Battery Service · 이 PC의 로컬 서비스 ID";
+                string bluetoothProducts = profile.Match.ProductIds == null
+                    ? string.Empty
+                    : string.Join(", ", profile.Match.ProductIds.ToArray());
+                return "Bluetooth LE · 표준 Battery Service · VID " +
+                    profile.Match.VendorId + " · PID " + bluetoothProducts;
+            }
+
             if (profile.Match == null)
                 return "연결 조건 없음";
             string products = profile.Match.ProductIds == null ? "" : string.Join(", ", profile.Match.ProductIds.ToArray());
-            string interfaceText = profile.Match.InterfaceNumber.HasValue ? " · 인터페이스 " + profile.Match.InterfaceNumber.Value : "";
+            string interfaceText = profile.Match.RequireNoInterfaceNumber
+                ? " · 인터페이스 MI 없음"
+                : (profile.Match.InterfaceNumber.HasValue
+                    ? " · 인터페이스 " + profile.Match.InterfaceNumber.Value
+                    : "");
             return "USB HID · VID " + profile.Match.VendorId + " · PID " + products + interfaceText;
         }
 
@@ -673,19 +700,48 @@ namespace PeripheralBatteryDashboard.UI
         private void UpdateSummary()
         {
             IList<BatteryReading> readings = _monitor.Snapshot;
-            int connected = readings.Count(r => r.Connection == DeviceConnectionState.Connected);
-            int low = readings.Count(r => r.Connection == DeviceConnectionState.Connected &&
+            IList<BatteryReading> presentReadings = readings.Where(r => r.IsPresent).ToList();
+            int connected = presentReadings.Count(r => r.Connection == DeviceConnectionState.Connected);
+            int low = presentReadings.Count(r => r.Connection == DeviceConnectionState.Connected &&
                 (r.Band == BatteryLevelBand.Critical || r.Band == BatteryLevelBand.Low));
-            int stale = readings.Count(r => r.IsStale);
-            string summary = "연결 " + connected + " / " + _profiles.Count;
-            if (low > 0)
-                summary += "   ·   배터리 부족 " + low;
-            if (stale > 0)
-                summary += "   ·   이전 값 " + stale;
+            int stale = presentReadings.Count(r => r.IsStale);
+            int pending = readings.Count(r => r.Presence == DevicePresenceState.Unknown);
+            string summary;
+            if (_profiles.Count == 0)
+                summary = "등록된 장치 프로필 없음";
+            else if (presentReadings.Count == 0 && pending > 0)
+                summary = "장치 상태를 확인하고 있습니다.";
+            else if (presentReadings.Count == 0)
+                summary = "현재 감지된 지원 장치 없음";
+            else
+            {
+                summary = "연결 " + connected + " / " + presentReadings.Count;
+                if (low > 0)
+                    summary += "   ·   배터리 부족 " + low;
+                if (stale > 0)
+                    summary += "   ·   이전 값 " + stale;
+            }
             _summaryText.Text = summary;
             _summaryText.Foreground = low > 0 ? UiFactory.Warning : UiFactory.PrimaryText;
 
-            BatteryReading latest = readings.OrderByDescending(r => r.SampledAtUtc).FirstOrDefault();
+            if (_cardsPanel != null)
+                _cardsPanel.Columns = presentReadings.Count <= 1 ? 1 : 2;
+            if (_emptyStateHost != null)
+            {
+                _emptyStateHost.Visibility = presentReadings.Count == 0
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+                if (_profiles.Count == 0)
+                    _emptyStateText.Text = "등록된 장치가 없습니다. 설치 에이전트가 이 PC의 장치를 조사해 등록해야 합니다.";
+                else if (pending > 0)
+                    _emptyStateText.Text = "지원 장치를 찾고 있습니다.";
+                else
+                    _emptyStateText.Text = "이 PC에서 현재 감지된 등록 장치가 없습니다.";
+            }
+
+            BatteryReading latest = presentReadings.OrderByDescending(r => r.SampledAtUtc)
+                .FirstOrDefault() ?? readings.Where(r => r.Presence != DevicePresenceState.Unknown)
+                .OrderByDescending(r => r.SampledAtUtc).FirstOrDefault();
             _lastUpdatedText.Text = latest == null
                 ? "마지막 업데이트 —"
                 : "마지막 업데이트 " + latest.SampledAtUtc.ToLocalTime().ToString("HH:mm:ss");
@@ -811,10 +867,14 @@ namespace PeripheralBatteryDashboard.UI
 
                 Root = UiFactory.Card(content, new Thickness(6));
                 Root.MinHeight = 194;
+                Root.Visibility = Visibility.Collapsed;
             }
 
             internal void Update(BatteryReading reading)
             {
+                Root.Visibility = reading.IsPresent
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
                 Brush color = StatusColor(reading);
                 _stateDot.Fill = color;
                 _statusText.Text = reading.StatusText;

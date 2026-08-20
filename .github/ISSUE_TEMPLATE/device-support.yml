@@ -1,6 +1,6 @@
 name: New device support
-description: Request support for a peripheral that is not detected yet.
-title: "[Device] "
+description: Request support for one or more peripherals that are not detected yet.
+title: "[Device(s)] "
 labels: [device-support]
 body:
   - type: markdown
@@ -8,37 +8,32 @@ body:
       value: |
         Do not post a device serial number or a full Windows HID device path.
         Unknown HID commands and command fuzzing are not accepted.
-  - type: input
-    id: device
+  - type: textarea
+    id: devices
     attributes:
-      label: Manufacturer and exact model
-      placeholder: Example Brand Model, including hardware revision
+      label: Devices and connection methods
+      description: List every requested device on a separate line with the manufacturer, exact model or revision, and the connection method actually used.
+      placeholder: |
+        Example Brand Model Rev A — 2.4 GHz USB dongle
+        Example Brand Model 2 — Bluetooth
     validations:
       required: true
-  - type: dropdown
-    id: connection
+  - type: textarea
+    id: observed_behavior
     attributes:
-      label: Connection method
-      options:
-        - 2.4 GHz USB dongle
-        - Bluetooth
-        - USB cable
-        - Other
-    validations:
-      required: true
-  - type: input
-    id: firmware
+      label: Observed behavior (optional)
+      description: Add a per-device symptom only when an existing reading is missing, wrong, or intermittent. It is not required for a new support request.
+  - type: textarea
+    id: firmware_versions
     attributes:
-      label: Firmware version
-      description: Leave blank if unknown.
+      label: Firmware versions (optional)
+      description: List a device and firmware version per line when known.
   - type: textarea
     id: diagnostics
     attributes:
       label: Sanitized diagnostics
-      description: Paste Diagnostics output. Remove serial numbers and full device paths first.
+      description: If a local agent produced redacted inventory or diagnostics, paste it here. Remove serial numbers and full device paths first.
       render: text
-    validations:
-      required: true
   - type: textarea
     id: evidence
     attributes:
