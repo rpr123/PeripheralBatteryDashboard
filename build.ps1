@@ -242,7 +242,7 @@ if (-not (Test-Path -LiteralPath $configSource)) {
 Copy-Item -LiteralPath $configSource -Destination ($guiPath + '.config') -Force
 Copy-Item -LiteralPath $configSource -Destination ($diagnosticsPath + '.config') -Force
 
-foreach ($directoryName in @('Profiles', 'Plugins')) {
+foreach ($directoryName in @('Profiles', 'Plugins', 'docs')) {
     $source = Join-Path $projectRoot $directoryName
     if (Test-Path -LiteralPath $source) {
         Copy-Item -LiteralPath $source -Destination (Join-Path $distRoot $directoryName) -Recurse -Force
