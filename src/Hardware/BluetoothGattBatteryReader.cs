@@ -1,11 +1,67 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
 
 namespace PeripheralBatteryDashboard.Hardware
 {
+    internal sealed class BluetoothGattBatteryServiceDescriptor
+    {
+        public byte? VendorIdSource { get; set; }
+        public ushort? VendorId { get; set; }
+        public ushort? ProductId { get; set; }
+        public string LocalServiceId { get; set; }
+        public string FriendlyName { get; set; }
+
+        public BluetoothGattBatteryServiceDescriptor()
+        {
+            LocalServiceId = string.Empty;
+            FriendlyName = string.Empty;
+        }
+    }
+
+    internal sealed class BluetoothGattBatteryServiceEnumeration
+    {
+        public IList<BluetoothGattBatteryServiceDescriptor> Services { get; private set; }
+        public IList<string> WarningCodes { get; private set; }
+
+        public BluetoothGattBatteryServiceEnumeration(
+            IList<BluetoothGattBatteryServiceDescriptor> services,
+            IList<string> warningCodes)
+        {
+            Services = services ?? new List<BluetoothGattBatteryServiceDescriptor>();
+            WarningCodes = warningCodes ?? new List<string>();
+        }
+    }
+
+    internal enum BluetoothGattBatteryReadStatus
+    {
+        NotFound,
+        Success,
+        FoundUnavailable,
+        Ambiguous,
+        EnumerationUnavailable
+    }
+
+    internal sealed class BluetoothGattBatteryReadResult
+    {
+        public BluetoothGattBatteryReadStatus Status { get; private set; }
+        public int? Percent { get; private set; }
+        public int CandidateCount { get; private set; }
+
+        public BluetoothGattBatteryReadResult(BluetoothGattBatteryReadStatus status,
+            int? percent, int candidateCount)
+        {
+            Status = status;
+            Percent = percent;
+            CandidateCount = candidateCount;
+        }
+    }
+
     internal static class BluetoothGattBatteryReader
     {
         private const uint DigcfPresent = 0x00000002;
@@ -41,15 +97,122 @@ namespace PeripheralBatteryDashboard.Hardware
             }
         }
 
-        internal static bool TryReadPercent(string friendlyNameContains, ushort vendorId,
-            IList<ushort> productIds, out int percent)
+        internal static BluetoothGattBatteryServiceEnumeration EnumerateBatteryServicesMetadata()
         {
-            percent = 0;
+            List<BluetoothGattBatteryServiceDescriptor> services =
+                new List<BluetoothGattBatteryServiceDescriptor>();
+            List<string> warnings = new List<string>();
             Guid interfaceGuid = GattServiceInterfaceGuid;
             IntPtr infoSet = Native.SetupDiGetClassDevs(ref interfaceGuid, null, IntPtr.Zero,
                 DigcfPresent | DigcfDeviceInterface);
             if (infoSet == Native.InvalidHandleValue)
-                return false;
+            {
+                warnings.Add("bluetooth-gatt-service-set-open-failed");
+                return new BluetoothGattBatteryServiceEnumeration(services, warnings);
+            }
+
+            try
+            {
+                for (uint index = 0; ; index++)
+                {
+                    DeviceInterfaceData interfaceData = new DeviceInterfaceData();
+                    interfaceData.Size = (uint)Marshal.SizeOf(typeof(DeviceInterfaceData));
+                    if (!Native.SetupDiEnumDeviceInterfaces(infoSet, IntPtr.Zero,
+                        ref interfaceGuid, index, ref interfaceData))
+                    {
+                        int error = Marshal.GetLastWin32Error();
+                        if (error == ErrorNoMoreItems)
+                            break;
+                        AddWarning(warnings, "bluetooth-gatt-interface-enumeration-failed");
+                        continue;
+                    }
+
+                    DeviceInfoData deviceInfo = new DeviceInfoData();
+                    deviceInfo.Size = (uint)Marshal.SizeOf(typeof(DeviceInfoData));
+                    string path = ReadDevicePath(infoSet, ref interfaceData, ref deviceInfo);
+                    if (string.IsNullOrEmpty(path))
+                    {
+                        AddWarning(warnings, "bluetooth-gatt-interface-detail-failed");
+                        continue;
+                    }
+                    if (path.IndexOf("{0000180f-0000-1000-8000-00805f9b34fb}",
+                        StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    byte? vendorIdSource;
+                    ushort vendorId;
+                    List<ushort> productIds;
+                    bool hasHardwareIdentity =
+                        TryParseHardwareIdentity(path, out vendorIdSource, out vendorId,
+                            out productIds);
+                    string friendlyName = ReadParentFriendlyName(deviceInfo.DevInst) ?? string.Empty;
+                    string localServiceId = ComputeLocalServiceId(path);
+                    if (!hasHardwareIdentity)
+                    {
+                        services.Add(new BluetoothGattBatteryServiceDescriptor
+                        {
+                            LocalServiceId = localServiceId,
+                            FriendlyName = friendlyName
+                        });
+                        continue;
+                    }
+
+                    foreach (ushort productId in productIds)
+                    {
+                        bool duplicate = services.Exists(item =>
+                            string.Equals(item.LocalServiceId, localServiceId,
+                                StringComparison.OrdinalIgnoreCase) &&
+                            item.VendorId == vendorId && item.ProductId == productId);
+                        if (duplicate)
+                            continue;
+                        services.Add(new BluetoothGattBatteryServiceDescriptor
+                        {
+                            VendorIdSource = vendorIdSource,
+                            VendorId = vendorId,
+                            ProductId = productId,
+                            LocalServiceId = localServiceId,
+                            FriendlyName = friendlyName
+                        });
+                    }
+                }
+            }
+            finally
+            {
+                Native.SetupDiDestroyDeviceInfoList(infoSet);
+            }
+
+            return new BluetoothGattBatteryServiceEnumeration(services, warnings);
+        }
+
+        internal static bool TryReadPercent(string friendlyNameContains, ushort vendorId,
+            IList<ushort> productIds, out int percent)
+        {
+            BluetoothGattBatteryReadResult result = ReadPercent(friendlyNameContains,
+                vendorId, productIds, null);
+            percent = result.Percent.GetValueOrDefault();
+            return result.Status == BluetoothGattBatteryReadStatus.Success;
+        }
+
+        internal static BluetoothGattBatteryReadResult ReadPercent(
+            string friendlyNameContains, ushort vendorId, IList<ushort> productIds)
+        {
+            return ReadPercent(friendlyNameContains, (ushort?)vendorId, productIds, null);
+        }
+
+        internal static BluetoothGattBatteryReadResult ReadPercent(
+            string friendlyNameContains, ushort? vendorId, IList<ushort> productIds,
+            string localServiceId, byte? vendorIdSource = null)
+        {
+            List<string> matchingPaths = new List<string>();
+            bool enumerationIncomplete = false;
+            Guid interfaceGuid = GattServiceInterfaceGuid;
+            IntPtr infoSet = Native.SetupDiGetClassDevs(ref interfaceGuid, null, IntPtr.Zero,
+                DigcfPresent | DigcfDeviceInterface);
+            if (infoSet == Native.InvalidHandleValue)
+            {
+                return new BluetoothGattBatteryReadResult(
+                    BluetoothGattBatteryReadStatus.EnumerationUnavailable, null, 0);
+            }
 
             try
             {
@@ -62,52 +225,74 @@ namespace PeripheralBatteryDashboard.Hardware
                     {
                         if (Marshal.GetLastWin32Error() == ErrorNoMoreItems)
                             break;
+                        enumerationIncomplete = true;
                         continue;
                     }
 
                     DeviceInfoData deviceInfo = new DeviceInfoData();
                     deviceInfo.Size = (uint)Marshal.SizeOf(typeof(DeviceInfoData));
                     string path = ReadDevicePath(infoSet, ref interfaceData, ref deviceInfo);
-                    if (string.IsNullOrEmpty(path) ||
-                        path.IndexOf("{0000180f-0000-1000-8000-00805f9b34fb}",
-                            StringComparison.OrdinalIgnoreCase) < 0)
+                    if (string.IsNullOrEmpty(path))
+                    {
+                        enumerationIncomplete = true;
+                        continue;
+                    }
+                    if (path.IndexOf("{0000180f-0000-1000-8000-00805f9b34fb}",
+                        StringComparison.OrdinalIgnoreCase) < 0)
                         continue;
 
                     string parentName = ReadParentFriendlyName(deviceInfo.DevInst);
-                    if (!PathMatchesHardware(path, vendorId, productIds))
+                    if (!CandidateMatches(path, parentName, friendlyNameContains,
+                        vendorId, productIds, localServiceId, vendorIdSource))
                         continue;
-                    if (!string.IsNullOrWhiteSpace(friendlyNameContains) &&
-                        !string.IsNullOrWhiteSpace(parentName) &&
-                        parentName.IndexOf(friendlyNameContains,
-                            StringComparison.OrdinalIgnoreCase) < 0)
-                        continue;
-
-                    using (SafeFileHandle handle = Native.CreateFile(path,
-                        GenericRead | GenericWrite,
-                        FileShareRead | FileShareWrite,
-                        IntPtr.Zero,
-                        OpenExisting,
-                        FileAttributeNormal,
-                        IntPtr.Zero))
-                    {
-                        if (handle.IsInvalid)
-                            continue;
-                        // Refresh the physical controller once at discovery and then
-                        // at most every five minutes. All normal 15-second polls use
-                        // the Windows Bluetooth cache and do not wake the controller.
-                        bool refreshFromDevice = TakeDeviceRefreshSlot(path);
-                        if ((refreshFromDevice &&
-                             TryReadBatteryLevel(handle, ForceReadFromDevice, out percent)) ||
-                            TryReadBatteryLevel(handle, ForceReadFromCache, out percent))
-                            return true;
-                    }
+                    if (!matchingPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        matchingPaths.Add(path);
                 }
             }
             finally
             {
                 Native.SetupDiDestroyDeviceInfoList(infoSet);
             }
-            return false;
+
+            bool hasUniqueLocalIdentity = !string.IsNullOrWhiteSpace(localServiceId);
+            BluetoothGattBatteryReadStatus candidateStatus = ClassifyCandidateSet(
+                matchingPaths.Count, enumerationIncomplete, hasUniqueLocalIdentity);
+            if (matchingPaths.Count != 1 ||
+                candidateStatus == BluetoothGattBatteryReadStatus.EnumerationUnavailable ||
+                candidateStatus == BluetoothGattBatteryReadStatus.Ambiguous)
+            {
+                return new BluetoothGattBatteryReadResult(
+                    candidateStatus, null, matchingPaths.Count);
+            }
+
+            string selectedPath = matchingPaths[0];
+            using (SafeFileHandle handle = Native.CreateFile(selectedPath,
+                GenericRead | GenericWrite,
+                FileShareRead | FileShareWrite,
+                IntPtr.Zero,
+                OpenExisting,
+                FileAttributeNormal,
+                IntPtr.Zero))
+            {
+                if (handle.IsInvalid)
+                {
+                    return new BluetoothGattBatteryReadResult(
+                        BluetoothGattBatteryReadStatus.FoundUnavailable, null, 1);
+                }
+                // Refresh the physical device at most every five minutes. Normal
+                // polls use the Windows cache and do not repeatedly wake it.
+                int percent;
+                bool refreshFromDevice = TakeDeviceRefreshSlot(selectedPath);
+                if ((refreshFromDevice &&
+                     TryReadBatteryLevel(handle, ForceReadFromDevice, out percent)) ||
+                    TryReadBatteryLevel(handle, ForceReadFromCache, out percent))
+                {
+                    return new BluetoothGattBatteryReadResult(
+                        BluetoothGattBatteryReadStatus.Success, percent, 1);
+                }
+            }
+            return new BluetoothGattBatteryReadResult(
+                BluetoothGattBatteryReadStatus.FoundUnavailable, null, 1);
         }
 
         private static string ReadDevicePath(IntPtr infoSet,
@@ -158,21 +343,58 @@ namespace PeripheralBatteryDashboard.Hardware
         internal static bool PathMatchesHardware(string path, ushort vendorId,
             IList<ushort> productIds)
         {
+            return PathMatchesHardware(path, vendorId, productIds, null);
+        }
+
+        internal static bool PathMatchesHardware(string path, ushort vendorId,
+            IList<ushort> productIds, byte? requiredVendorIdSource)
+        {
             if (vendorId == 0 || productIds == null || productIds.Count == 0)
                 return false;
 
-            Match vendorMatch = Regex.Match(path,
-                @"VID(?:&(?:[0-9A-F]{2})?|_)([0-9A-F]{4})(?![0-9A-F])",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            byte? pathVendorIdSource;
             ushort pathVendor;
-            if (!vendorMatch.Success ||
-                !ushort.TryParse(vendorMatch.Groups[1].Value,
-                    System.Globalization.NumberStyles.HexNumber,
-                    System.Globalization.CultureInfo.InvariantCulture, out pathVendor) ||
+            List<ushort> pathProducts;
+            if (!TryParseHardwareIdentity(path, out pathVendorIdSource, out pathVendor,
+                    out pathProducts) ||
                 pathVendor != vendorId)
                 return false;
+            if (requiredVendorIdSource.HasValue &&
+                pathVendorIdSource != requiredVendorIdSource)
+                return false;
+            return pathProducts.Any(productIds.Contains);
+        }
 
-            MatchCollection productMatches = Regex.Matches(path,
+        internal static bool TryParseHardwareIdentity(string path, out ushort vendorId,
+            out List<ushort> productIds)
+        {
+            byte? vendorIdSource;
+            return TryParseHardwareIdentity(path, out vendorIdSource, out vendorId,
+                out productIds);
+        }
+
+        internal static bool TryParseHardwareIdentity(string path, out byte? vendorIdSource,
+            out ushort vendorId, out List<ushort> productIds)
+        {
+            vendorIdSource = null;
+            vendorId = 0;
+            productIds = new List<ushort>();
+            Match vendorMatch = Regex.Match(path ?? string.Empty,
+                @"VID(?:&(?:(?<source>[0-9A-F]{2}))?|_)(?<vendor>[0-9A-F]{4})(?![0-9A-F])",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!vendorMatch.Success ||
+                !ushort.TryParse(vendorMatch.Groups["vendor"].Value,
+                    System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture, out vendorId))
+                return false;
+            byte parsedSource;
+            if (vendorMatch.Groups["source"].Success &&
+                byte.TryParse(vendorMatch.Groups["source"].Value,
+                    System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture, out parsedSource))
+                vendorIdSource = parsedSource;
+
+            MatchCollection productMatches = Regex.Matches(path ?? string.Empty,
                 @"PID[&_]([0-9A-F]{4})(?![0-9A-F])",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
             foreach (Match productMatch in productMatches)
@@ -182,10 +404,84 @@ namespace PeripheralBatteryDashboard.Hardware
                     System.Globalization.NumberStyles.HexNumber,
                     System.Globalization.CultureInfo.InvariantCulture, out pathProduct))
                     continue;
-                if (productIds.Contains(pathProduct))
-                    return true;
+                if (!productIds.Contains(pathProduct))
+                    productIds.Add(pathProduct);
             }
-            return false;
+            return vendorId != 0 && productIds.Count > 0;
+        }
+
+        internal static string ComputeLocalServiceId(string path)
+        {
+            byte[] digest;
+            using (SHA256 sha = SHA256.Create())
+            {
+                // Windows device-interface paths are case-insensitive. Hash a
+                // canonical form so harmless casing changes do not invalidate a
+                // per-PC service identity.
+                string canonicalPath = (path ?? string.Empty).ToUpperInvariant();
+                digest = sha.ComputeHash(Encoding.UTF8.GetBytes(canonicalPath));
+            }
+            StringBuilder result = new StringBuilder("bt-bas-");
+            for (int index = 0; index < 12; index++)
+                result.Append(digest[index].ToString("x2"));
+            return result.ToString();
+        }
+
+        internal static bool CandidateMatches(string path, string parentName,
+            string friendlyNameContains, ushort? vendorId, IList<ushort> productIds,
+            string localServiceId, byte? vendorIdSource = null)
+        {
+            bool hasLocalIdentity = !string.IsNullOrWhiteSpace(localServiceId);
+            bool hasHardwareIdentity = vendorId.HasValue && productIds != null &&
+                productIds.Count > 0;
+            if (!hasLocalIdentity && !hasHardwareIdentity)
+                return false;
+
+            if (hasLocalIdentity)
+            {
+                if (!string.Equals(ComputeLocalServiceId(path), localServiceId,
+                    StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            if (hasHardwareIdentity &&
+                !PathMatchesHardware(path, vendorId.Value, productIds, vendorIdSource))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(friendlyNameContains) &&
+                (string.IsNullOrWhiteSpace(parentName) ||
+                 parentName.IndexOf(friendlyNameContains,
+                     StringComparison.OrdinalIgnoreCase) < 0))
+                return false;
+            return true;
+        }
+
+        internal static BluetoothGattBatteryReadStatus ClassifyCandidateSet(
+            int candidateCount, bool enumerationIncomplete,
+            bool hasUniqueLocalIdentity = false)
+        {
+            if (candidateCount > 1)
+                return BluetoothGattBatteryReadStatus.Ambiguous;
+            if (candidateCount == 0)
+            {
+                return enumerationIncomplete
+                    ? BluetoothGattBatteryReadStatus.EnumerationUnavailable
+                    : BluetoothGattBatteryReadStatus.NotFound;
+            }
+            // A partial enumeration cannot prove that a VID/PID or friendly-name
+            // selector has only one candidate. A per-PC service ID identifies one
+            // exact interface, so unrelated enumeration failures do not make that
+            // selection ambiguous.
+            if (enumerationIncomplete && !hasUniqueLocalIdentity)
+                return BluetoothGattBatteryReadStatus.EnumerationUnavailable;
+            return BluetoothGattBatteryReadStatus.FoundUnavailable;
+        }
+
+        private static void AddWarning(IList<string> warnings, string warning)
+        {
+            if (!warnings.Contains(warning))
+                warnings.Add(warning);
         }
 
         private static bool TakeDeviceRefreshSlot(string path)

@@ -125,7 +125,59 @@ namespace PeripheralBatteryDashboard.Core
                 throw new InvalidDataException(profile.Id + "의 providerId가 비어 있습니다.");
             if (profile.Match == null)
                 throw new InvalidDataException(profile.Id + "의 match가 비어 있습니다.");
-            if (!string.Equals(profile.Match.Transport, "xinput", StringComparison.OrdinalIgnoreCase))
+            if (!ProviderSafetyPolicy.IsAllowedTransport(profile.Match.Transport))
+                throw new InvalidDataException(profile.Id + "의 transport가 지원되지 않습니다.");
+            if (!ProviderSafetyPolicy.IsBuiltInTransportCompatible(profile.ProviderId,
+                profile.Match.Transport))
+            {
+                throw new InvalidDataException(profile.Id +
+                    "의 ProviderId와 transport 조합이 올바르지 않습니다.");
+            }
+            if (profile.Match.InterfaceNumber.HasValue &&
+                profile.Match.RequireNoInterfaceNumber)
+            {
+                throw new InvalidDataException(profile.Id +
+                    "의 InterfaceNumber와 RequireNoInterfaceNumber를 동시에 지정할 수 없습니다.");
+            }
+            if (string.Equals(profile.Match.Transport, "bluetooth-gatt",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                bool exactHardware = profile.Match.ParsedVendorId.HasValue &&
+                    profile.Match.ParsedProductIds.Count > 0;
+                bool hasAnyHardwareIdentity =
+                    !string.IsNullOrWhiteSpace(profile.Match.VendorId) ||
+                    (profile.Match.ProductIds != null &&
+                     profile.Match.ProductIds.Count > 0);
+                bool isGenericBatteryService = string.Equals(profile.ProviderId,
+                    "builtin.bluetooth.gatt-battery", StringComparison.OrdinalIgnoreCase);
+                if (isGenericBatteryService && !profile.Match.HasValidBluetoothServiceId)
+                {
+                    throw new InvalidDataException(profile.Id +
+                        "의 Bluetooth GATT match에는 인벤토리의 유효한 로컬 BluetoothServiceId가 필요합니다.");
+                }
+                if (!isGenericBatteryService &&
+                    !string.IsNullOrWhiteSpace(profile.Match.BluetoothServiceId))
+                {
+                    throw new InvalidDataException(profile.Id +
+                        "의 BluetoothServiceId는 표준 Battery Service 공급자에서만 사용할 수 있습니다.");
+                }
+                if (hasAnyHardwareIdentity && !exactHardware)
+                {
+                    throw new InvalidDataException(profile.Id +
+                        "의 Bluetooth GATT VID/PID는 둘 다 올바르게 지정하거나 둘 다 비워야 합니다.");
+                }
+                if (!isGenericBatteryService && !exactHardware)
+                {
+                    throw new InvalidDataException(profile.Id +
+                        "의 사용자 Bluetooth GATT 공급자에는 exact VID/PID가 필요합니다.");
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(profile.Match.BluetoothServiceId))
+            {
+                throw new InvalidDataException(profile.Id +
+                    "의 BluetoothServiceId는 bluetooth-gatt transport에서만 사용할 수 있습니다.");
+            }
+            else if (!string.Equals(profile.Match.Transport, "xinput", StringComparison.OrdinalIgnoreCase))
             {
                 if (!profile.Match.ParsedVendorId.HasValue || profile.Match.ParsedProductIds.Count == 0)
                     throw new InvalidDataException(profile.Id + "의 VID/PID가 올바르지 않습니다.");

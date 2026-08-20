@@ -1,6 +1,6 @@
 # Peripheral Battery Dashboard
 
-Windows에서 동글 또는 Bluetooth로 연결한 주변기기의 배터리 상태를 한 화면과 트레이에서 확인하는 앱입니다. 장치 식별 정보는 JSON 프로필에, 실제 조회 프로토콜은 공급자(provider)에 분리되어 있어 기기를 교체하거나 추가하기 쉽습니다.
+Windows에서 동글 또는 Bluetooth로 연결한 주변기기의 배터리 상태를 한 화면과 트레이에서 확인하는 앱입니다. 장치 식별 정보는 JSON 프로필에, 실제 조회 프로토콜은 공급자(provider)에 분리되어 있어 기기를 교체하거나 추가하기 쉽습니다. 공개 배포본은 특정 사용자의 장치를 기본 등록하지 않으며, 설치 에이전트가 각 PC의 실제 장치를 식별하고 배터리 프로토콜을 조사·검증한 뒤 사용자 프로필과 필요한 공급자를 등록합니다.
 
 > [!IMPORTANT]
 > **이 프로젝트의 공식 설치 방식은 로컬 Windows에 접근할 수 있는 Codex 또는 코딩 에이전트를 통하는 것입니다. 사용자가 ZIP을 직접 내려받아 실행하거나 소스를 직접 빌드·배치하는 설치 절차는 제공하지 않습니다.**
@@ -8,40 +8,33 @@ Windows에서 동글 또는 Bluetooth로 연결한 주변기기의 배터리 상
 
 ## 공식 설치 요청 방법
 
-설치·업데이트와 새로운 장치 지원 조정은 Codex 같은 로컬 코딩 에이전트가 저장소 문서·진단 결과·소스를 함께 검토하며 수행하는 것을 전제로 합니다. 설치가 완료된 뒤 배터리 대시보드와 트레이 기능을 평소에 사용하는 데에는 Codex가 필요하지 않습니다.
+설치·업데이트와 새로운 장치 지원 조정은 Codex 같은 로컬 코딩 에이전트가 저장소 문서·진단 결과·소스를 함께 검토하며 수행하는 것을 전제로 합니다. 아래 설치 프롬프트 하나는 설치에서 끝나는 요청이 아니라, Windows의 HID descriptor와 표준 Bluetooth Battery Service 메타데이터 인벤토리 → 미지원 기기별 공개 자료 조사 → 근거가 충분한 프로필/공급자 구현과 fixture 검증까지 에이전트가 자동으로 이어가는 단일 작업입니다. 설치가 완료된 뒤 배터리 대시보드와 트레이 기능을 평소에 사용하는 데에는 Codex가 필요하지 않습니다.
 
 1. 설치할 Windows PC에서 로컬 셸과 파일을 사용할 수 있는 Codex 또는 코딩 에이전트를 엽니다. 저장소와 ZIP을 사용자가 먼저 받을 필요는 없습니다.
-2. 아래 프롬프트 **전체**를 그대로 전달하고, 마지막의 기기 정보만 채웁니다.
-3. 에이전트가 공식 저장소 확보, 배포본 다운로드 또는 소스 빌드, 안정된 설치 위치 배치, 자체 테스트와 호환성 확인을 순서대로 수행하게 합니다.
+2. 아래 프롬프트 **전체**를 그대로 전달합니다. 사용하는 제품과 실제 연결 방식을 한 줄에 하나씩 모두 적을 수 있으며, 기기마다 프롬프트를 따로 보낼 필요가 없습니다. 목록을 비워도 에이전트가 설치 후 읽기 전용 HID 및 표준 Bluetooth 서비스 인벤토리로 연결된 후보를 찾습니다.
+3. 에이전트가 공식 저장소 확보, 배포본 다운로드 또는 소스 빌드, 안정된 설치 위치 배치, 자체 테스트와 읽기 전용 인벤토리, 표준 Bluetooth의 범용 프로필 등록 또는 나머지 미지원 기기의 공개 자료 조사와 호환성 구현을 순서대로 수행하게 합니다.
 4. 에이전트가 다운로드·설치·레지스트리/자동 실행 변경·첫 GUI 실행 또는 실제 장치 요청 전에 설명하는 대상과 영향을 확인하고 승인 여부를 결정합니다.
 
 ```text
-Peripheral Battery Dashboard의 공식 에이전트 설치 흐름에 따라 내 Windows PC에 앱을 안전하게 설치하고, 연결된 주변기기와의 호환성을 점검해 줘. 내가 저장소를 직접 복제하거나 ZIP을 내려받아 압축 해제하고, 소스를 빌드하거나 설치 파일을 배치하도록 넘기지 말고 네가 승인 경계를 지키며 전체 설치를 수행해라.
+다음 저장소의 Peripheral Battery Dashboard를 이 Windows PC에 설치하고, 아래에 적은 모든 주변기기의 배터리 호환성을 한 작업에서 점검·추가해 줘.
 
-대상 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
+저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
-진행 순서:
-1. 먼저 읽기 전용으로 Windows 10/11 x64 여부, .NET Framework 4.8, Git과 VS 2022 Build Tools 유무, 기존 설치 위치와 후보 설치 경로를 확인하고 계획을 요약한다. 앱 실행과 현재 사용자용 Release 설치에는 관리자 권한이 필요하지 않다. 누락된 Microsoft 런타임이나 빌드 도구가 권한 상승을 요구하면 별도 승인 없이 설치하지 말고 Release 경로 또는 `설치 보류(blocked)`를 선택한다.
-2. 기존 프로젝트 폴더가 있으면 origin URL이 위 공식 URL과 같은지, HEAD와 dirty 상태를 읽기 전용으로 확인하고 사용자 변경을 보존한다. origin이 다르면 그 복사본을 실행하지 않는다. 공식 로컬 복사본이 없으면 공식 Release ZIP과 SHA 파일을 받을지, 위 URL을 `git clone`할지 판단하고 정확한 URL·대상 경로·생길 파일을 보여 준 뒤 네트워크와 쓰기에 대한 승인을 기다린다.
-3. clone을 선택하면 origin과 HEAD를 확인한 뒤 저장소 문서를 읽는다. Release를 선택하면 공식 ZIP과 `SHA256SUMS.txt`를 받고, 압축 해제나 실행 전에 SHA-256을 정확히 비교한다. 불일치하면 즉시 중단한다. 일치하면 압축을 해제한 뒤 포함된 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 읽는다. SmartScreen이나 보안 경고를 임의로 우회하지 않는다.
-4. 검증된 배포본과 소스 빌드 중 적합한 방법을 선택한다. 빌드한다면 격리된 출력 폴더를 사용한다. 다운로드, 빌드 도구·런타임 설치, 저장소 밖의 안정된 앱 폴더 쓰기 등 외부 상태 변경 전에 정확한 대상과 영향을 설명하고 내 승인을 받는다.
-5. 설치 후 실제 장치 I/O가 없는 `PeripheralBatteryDashboard.Diagnostics.exe --self-test`를 먼저 실행하고 종료 코드를 확인한다.
-6. GUI 첫 실행 전에 자동 실행을 켤지 끌지 묻는다. 끄기를 선택하면 전체 설정 파일과 `StartWithWindows=false` 쓰기를 설명하고 승인 후 먼저 준비한다. 켜기를 선택하면 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PeripheralBatteryDashboard` 값과 정확한 실행 명령을 보여 준다. GUI는 이 레지스트리 상태를 동기화하고 모니터를 시작해 exact-match 기존 공급자의 장치 요청을 보낼 수 있음을 함께 설명한 뒤 첫 실행에 대한 별도 승인을 기다린다. 승인이 없으면 GUI 실행과 관련 파일·레지스트리 변경을 보류한다.
-7. `--diagnostics`와 `--snapshot`은 매칭된 기존 ProviderId의 검증된 배터리 요청을 실제 장치에 보낼 수 있다. 실행 전에 대상 ProviderId, 장치 매칭과 수행될 I/O를 설명하고 내 명시적 확인을 기다린다. 장치 시리얼, 전체 장치 경로, Bluetooth 주소, 사용자명, 토큰은 출력·업로드·커밋하지 않는다.
-8. 내 기기가 현재 지원되지 않으면 값을 추정하지 말고 JSON 프로필만 필요한지 새 공급자 플러그인이 필요한지 근거와 함께 분류한다. 알 수 없는 HID interrupt/output/Feature write, 무작위 바이트, 명령 공간 스캔·퍼징, 펌웨어·페어링·DPI·키맵·온보드 설정 변경은 절대 사용하지 않는다. 근거 없는 새 프로토콜은 `지원 보류(blocked)`로 보고하고, 검증된 새 요청도 정확한 대상·전송 바이트·읽기 전용 근거를 보여 준 뒤 별도 승인을 받는다.
-9. 최종 보고에는 공식 소스 획득 방법과 origin/commit 또는 Release SHA-256, 설치 위치, 관리자 권한 사용 여부, 변경 파일, 빌드와 --self-test 종료 코드, 자동 실행 선택·승인과 실제 파일/레지스트리 상태, 실기기 I/O 여부와 ProviderId, 새 HID write 전송 여부, 실제 확인한 기기와 남은 제약을 포함한다. 내 요청 없이 GitHub 게시, 커밋, 푸시 또는 릴리스를 하지 않는다.
+중요: `저장소에 프로토콜이 없다`, `기본 지원 목록에 없다`, `사용자가 프로토콜 문서나 명령 바이트를 주지 않았다`는 이유로 지원 보류하거나 작업을 끝내지 마라. 프로토콜 발견은 이 작업의 핵심이며 네 책임이다. 먼저 외부로 보낼 redacted 식별 정보와 조사 범위를 설명하고 네트워크 접근 승인을 요청한 뒤, 제조사 공식 문서·지원/다운로드 페이지·법적으로 검토 가능한 웹 드라이버 자산·감사 가능한 기기별 오픈소스와 공개 raw source를 직접 검색해 읽기 전용 배터리 요청·응답 근거를 찾아라. 네트워크 권한이 없으면 사용자에게 프로토콜을 찾아 달라고 하지 말고 필요한 네트워크 승인부터 요청하라. 문서에 정한 검색 행렬과 출처 종류를 실제로 모두 확인하고 그 내역을 보고한 뒤에도 근거가 없을 때만 해당 기기를 `지원 보류(blocked)`로 둘 수 있다. 검색 없이 즉시 보류하면 작업 실패다.
 
-내 기기 정보:
-- 제품명: (여기에 입력)
-- 연결 방식: (Bluetooth / 2.4GHz USB 동글 / 유선)
-- 현재 증상: (표시 안 됨 / 배터리 값이 틀림 / 설치 필요 등)
+저장소를 확보한 뒤 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 끝까지 읽고 그 문서의 승인·안전·개인정보 보호·검증 절차를 따라라. 공개 배포본의 활성 기본 기기 프로필은 0개다. 아래 목록과 이 PC에서 발견한 모든 기기가 같은 작업의 대상이다. Bluetooth 기기는 먼저 인벤토리의 표준 Battery Service 0x180F/0x2A19를 확인하고, 존재하면 브랜드와 무관하게 `builtin.bluetooth.gatt-battery` 사용자 프로필을 등록하라. 인벤토리가 제공한 이 PC 전용 `localServiceId`를 항상 사용하고, VID/PID가 있으면 추가 AND 조건으로 함께 기록하되 가명 ID를 외부 검색·공개 프로필에 재사용하지 마라. 표준 서비스가 없는 기기만 각 배터리 프로토콜을 공개 근거에서 직접 조사·검증한 뒤 필요한 공급자를 구현하라. 기존 공급자와 동일한 프로토콜이 입증된 경우에만 이를 재사용하고, 다르면 별도 공급자를 구현하라. 기기별 결과를 보고하며 한 기기의 실패나 지원 보류 때문에 나머지를 생략하지 마라. 목록이 비어 있으면 문서에 정의된 읽기 전용 인벤토리, Windows 메타데이터 점검과 최소 질문 절차로 후보를 식별한 뒤 작업을 계속하라.
+
+사용 제품 및 연결 방식(여러 개 입력 가능, 전부 비워도 됨):
+- [제품명/리비전] — [Bluetooth / 2.4GHz USB 동글 / 유선]
+- [제품명/리비전] — [Bluetooth / 2.4GHz USB 동글 / 유선]
+- ...
 ```
 
-설치·업데이트·진단·미지원 기기 추가를 따로 요청하려면 사용자가 명령을 직접 실행하지 말고 [CODEX-PROMPTS.md](CODEX-PROMPTS.md)의 목적별 프롬프트를 로컬 에이전트에 전달하세요. 경량급 Codex 모델(예: Luna)은 문서에 정해진 설치·빌드·기존 공급자용 프로필 추가에 적합합니다. 알려지지 않은 동글 프로토콜을 근거 자료에서 분석하고 새 공급자를 구현하는 작업은 더 강한 추론 모델을 권장하며, 어떤 모델도 근거 없는 HID 명령을 시험해서는 안 됩니다.
+설치·업데이트·진단·미지원 기기 추가를 따로 요청하려면 사용자가 명령을 직접 실행하지 말고 [CODEX-PROMPTS.md](CODEX-PROMPTS.md)의 목적별 프롬프트를 로컬 에이전트에 전달하세요. 로컬 도구와 승인된 웹 접근을 사용할 수 있는 경량급 Codex 모델(예: Luna)도 읽기 전용 descriptor 인벤토리 수집, 공개 근거 조사, 좁은 프로필 또는 잘 문서화된 공급자 구현과 fixture 검증까지 이 흐름을 따라야 합니다. 서로 충돌하는 자료의 해석이나 복잡한 새 프로토콜 검토에는 더 강한 추론 모델을 권장하지만, 모델이 가볍다는 이유로 조사를 생략하고 즉시 지원 보류해서는 안 됩니다. 어떤 모델도 근거 없는 HID 명령을 시험해서는 안 됩니다.
 
 ## 화면 예시
 
-대시보드에서는 연결된 장치의 배터리 잔량과 연결 방식, 마지막 업데이트 시각을 한 화면에서 확인할 수 있습니다. 아래 배터리 수치는 촬영 당시의 예시입니다.
+대시보드에서는 연결된 장치의 배터리 잔량과 연결 방식, 마지막 업데이트 시각을 한 화면에서 확인할 수 있습니다. 아래 화면은 에이전트가 한 PC의 사용자 프로필을 구성한 뒤의 예시이며, 해당 네 기기가 배포판에 기본 등록된다는 뜻은 아닙니다. 배터리 수치는 촬영 당시의 예시입니다.
 
 ![헤드셋, 키보드, 마우스와 Xbox 컨트롤러의 배터리를 보여 주는 Peripheral Battery Dashboard](docs/images/dashboard-overview.png)
 
@@ -53,35 +46,42 @@ Peripheral Battery Dashboard의 공식 에이전트 설치 흐름에 따라 내 
 
 아래 자산은 설치 에이전트가 공식 배포본을 선택할 때 사용하는 입력입니다. 사용자가 직접 내려받아 압축을 풀고 실행하는 설치 흐름은 이 프로젝트의 지원 대상이 아닙니다.
 
-- Windows x64 배포본: [PeripheralBatteryDashboard-v1.0.4-win-x64.zip](releases/PeripheralBatteryDashboard-v1.0.4-win-x64.zip)
+- Windows x64 배포본: [PeripheralBatteryDashboard-v1.1.0-win-x64.zip](releases/PeripheralBatteryDashboard-v1.1.0-win-x64.zip)
 - SHA-256 목록: [releases/SHA256SUMS.txt](releases/SHA256SUMS.txt)
 
 에이전트는 다운로드 후 다음 명령으로 해시를 계산하고 `SHA256SUMS.txt`의 값과 비교해야 합니다. 값이 다르면 압축 해제나 실행을 중단하고 사용자에게 보고합니다.
 
 ```powershell
-Get-FileHash .\PeripheralBatteryDashboard-v1.0.4-win-x64.zip -Algorithm SHA256
+Get-FileHash .\PeripheralBatteryDashboard-v1.1.0-win-x64.zip -Algorithm SHA256
 ```
 
 현재 배포 바이너리는 Authenticode 코드 서명이 되어 있지 않습니다. 따라서 Windows SmartScreen 또는 백신이 **알 수 없는 게시자** 경고를 표시할 수 있습니다. 에이전트는 경고를 자동으로 우회해서는 안 되며, 공식 출처와 SHA-256 확인 결과를 사용자에게 보여 주고 실행 여부를 별도로 승인받아야 합니다. 필요하면 에이전트가 저장소 소스를 검토하고 아래 빌드 참고에 따라 직접 생성할 수 있습니다.
 
-요구 환경은 **Windows 10/11 x64와 .NET Framework 4.8**입니다. 기본 프로필은 아래 표의 정확한 기기 및 현재 확인된 하드웨어 매칭만 지원합니다. 같은 제품군, 다른 리비전 또는 다른 VID/PID가 자동으로 호환된다는 뜻이 아닙니다.
+요구 환경은 **Windows 10/11 x64와 .NET Framework 4.8**입니다. 새 설치의 활성 장치 프로필은 0개입니다. 따라서 설치 에이전트가 사용자 PC에서 장치를 조사·등록하기 전 빈 대시보드가 보이는 것이 정상입니다.
 
-## 기본 지원 장치
+## 포함된 프로토콜 공급자(기본 등록 아님)
+
+아래 구현은 코드에 남아 있어 exact hardware identity와 동일 프로토콜이 다시 입증되면 에이전트가 사용자 프로필에서 재사용할 수 있습니다. 그러나 공개 배포본은 아래 장치의 활성 프로필도 자동으로 만들지 않습니다. 다른 기기는 에이전트가 공개 자료에서 읽기 전용 배터리 프로토콜을 직접 찾아 검증하고, 동일성이 입증되면 기존 공급자를 재사용하며, 다르면 별도 공급자와 사용자 프로필을 구현·등록해야 합니다.
 
 | 장치 | 연결 | 표시 방식 |
 |---|---|---|
 | SteelSeries Arctis Nova 7 Gen 2 | 2.4GHz USB 동글 | 잔량 백분율, 충전 상태 |
 | AULA F108 Pro | 2.4GHz USB 동글 | 잔량 백분율 |
 | VXE R1 SE+ | 2.4GHz USB 동글 | 잔량 백분율, 충전 상태, 전압 |
-| Xbox Wireless Controller | Bluetooth/XInput | Bluetooth GATT 백분율, 가능하면 XInput 4단계 잔량 |
+| Bluetooth SIG 표준 Battery Service 기기 | Bluetooth LE | 브랜드 공통 0x180F/0x2A19 잔량 백분율; 이 PC 전용 로컬 서비스 ID 필수, VID/PID는 선택적 추가 조건 |
+| Xbox Wireless Controller | Bluetooth | exact Bluetooth GATT 백분율; 명시적으로 검증·고정한 경우에만 XInput 단계 |
 
-현재 USB 동글 기본 매칭은 Arctis Nova 7 Gen 2 `1038:227E`(MI 03, Usage `FFC0:0001`), AULA F108 Pro `05AC:024F`(MI 03, Usage `FF60:0061`), VXE R1 SE+ `373B:1085`(MI 01, Usage `FF02:0002`)입니다. Xbox 기본 프로필은 `045E:0B13`과 Bluetooth/XInput 경로를 사용합니다. 실제 기준은 [Profiles/builtin.devices.json](Profiles/builtin.devices.json)이며, PID나 HID 컬렉션이 다르면 같은 제품명이어도 별도 확인이 필요합니다.
+기존 공급자를 검증했던 exact identity는 Arctis Nova 7 Gen 2 `1038:227E`(MI 03, Usage `FFC0:0001`), AULA F108 Pro `05AC:024F`(MI 03, Usage `FF60:0061`), VXE R1 SE+ `373B:1085`(MI 01, Usage `FF02:0002`), Xbox Wireless Controller `045E:0B13`입니다. 이 값은 자동 등록 목록이 아니라 공급자 재사용 여부를 판단할 때 다시 대조할 근거입니다. [Profiles/builtin.devices.json](Profiles/builtin.devices.json)은 의도적으로 비어 있으며, PID나 HID 컬렉션이 다르면 같은 제품명이어도 새 조사가 필요합니다.
 
-Xbox 컨트롤러는 연결 여부를 XInput 입력 상태로 확인합니다. Bluetooth 연결에서 XInput 배터리 정보가 비어 있으면 표준 Bluetooth Battery Service(GATT)를 읽어 백분율로 표시합니다. XInput이 건전지 잔량을 제공하는 연결 방식에서는 `교체 필요 / 부족 / 보통 / 충분` 4단계로 표시하며, 두 배터리 API 모두 값을 주지 않더라도 연결된 패드를 미연결로 오판하지 않습니다.
+Bluetooth라고 해서 모두 같은 배터리 규격을 쓰는 것은 아니지만, Windows에 Bluetooth SIG 표준 Battery Service `0x180F`와 Battery Level `0x2A19`를 노출하는 키보드·마우스·펜·게임패드 등은 브랜드별 공급자를 새로 만들지 않고 범용 공급자로 등록할 수 있습니다. 범용 프로필은 `--inventory`가 만든 그 PC 전용 가명 `localServiceId`를 항상 사용합니다. VID/PID가 함께 보이면 이를 추가 AND 조건으로 기록할 수 있지만 로컬 ID를 대체하지는 않습니다. 같은 조건의 서비스가 여러 개이거나 열거가 불완전하면 첫 장치를 임의 선택하지 않습니다. 표준 서비스가 없을 때만 제조사 전용 프로토콜 조사가 필요합니다.
+
+에이전트가 exact Xbox 프로필을 사용자 PC에 등록한 경우, Xbox 공급자는 프로필에 명시된 VID/PID가 정확히 일치하는 표준 Bluetooth Battery Service를 먼저 확인합니다. 누락된 VID/PID를 Xbox 값으로 암묵 보충하지 않습니다. XInput은 슬롯 자체가 VID/PID를 제공하지 않으므로 임의 슬롯 순회는 기본적으로 비활성화되어 있습니다. 에이전트가 특정 슬롯의 한계를 설명하고 `XInputUserIndex`와 `AllowUnboundXInput=true`를 명시적으로 등록한 경우에만 `교체 필요 / 부족 / 보통 / 충분` 4단계 경로를 사용할 수 있습니다.
 
 ## 에이전트 설치 후 사용
 
 에이전트는 설치가 끝나면 안정된 설치 위치, 자체 테스트 결과, 자동 실행 상태와 실행 방법을 최종 보고해야 합니다. 설치 후 평소 사용에는 에이전트가 필요하지 않습니다.
+
+앱은 등록된 프로필 자체가 아니라 현재 PC에서 실제로 감지된 장치만 배터리 카드와 기기별 트레이 아이콘으로 표시합니다. 정확한 HID 동글이 꽂혀 있으면 주변기기 본체가 절전 중이어도 표시를 유지하고, 동글이 빠지면 숨깁니다. Bluetooth/XInput 프로필은 현재 연결된 동안 표시됩니다. 감지된 등록 장치가 하나도 없어도 앱을 열고 종료할 수 있도록 중립적인 공용 트레이 아이콘 하나는 남습니다.
 
 1. 전원이 꺼지거나 절전 중인 장치는 버튼을 누르거나 움직여 깨운 뒤 앱에서 **새로고침**을 누릅니다.
 2. 창을 닫으면 기본 설정에서는 트레이로 최소화됩니다. 완전히 종료하려면 트레이 메뉴의 **종료**를 사용합니다.
@@ -99,9 +99,9 @@ Windows 11은 새 트레이 아이콘을 숨겨진 아이콘 영역으로 접을
 
 ## 조회 주기와 시스템 부담
 
-기본 조회 주기는 30초이며 설정에서 15, 30, 60, 120초를 선택할 수 있습니다. 한 번의 조회는 작은 HID/XInput 상태 요청뿐이고 동시에 두 장치까지만 처리하므로 15초도 일반적인 PC에서 부담이 매우 작습니다. 연결이 끊겼거나 응답하지 않는 장치는 실패가 반복될수록 조회 간격을 자동으로 늘리며 최대 5분까지 쉬었다가 재시도합니다.
+기본 조회 주기는 30초이며 설정에서 15, 30, 60, 120초를 선택할 수 있습니다. 한 번의 조회는 작은 HID/XInput/GATT 상태 요청뿐이고 동시에 두 장치까지만 처리하므로 15초도 일반적인 PC에서 부담이 매우 작습니다. HID의 실제 존재 여부는 같은 정상 주기로 descriptor 메타데이터만 다시 확인하므로 새로 꽂거나 뺀 동글이 화면에 반영됩니다. 감지된 장치가 절전·점유 등으로 배터리 응답을 주지 않으면 실제 공급자 요청만 최대 5분까지 백오프합니다.
 
-Xbox Bluetooth 잔량은 첫 연결과 최대 5분마다만 패드에 직접 확인하고, 그 사이에는 Windows Bluetooth 캐시를 읽습니다. 따라서 앱의 15초 화면 갱신이 15초마다 컨트롤러를 깨우지는 않습니다.
+표준 Bluetooth 잔량은 첫 연결과 최대 5분마다만 기기에 직접 확인하고, 그 사이에는 Windows Bluetooth 캐시를 읽습니다. 따라서 앱의 15초 화면 갱신이 15초마다 Bluetooth 기기를 깨우지는 않습니다.
 
 배터리 절약을 우선하면 30초 또는 60초를 권장합니다. 15초 주기는 화면을 자주 확인하거나 충전 상태 변화를 빠르게 보고 싶을 때 사용하면 됩니다.
 
@@ -110,14 +110,16 @@ Xbox Bluetooth 잔량은 첫 연결과 최대 5분마다만 패드에 직접 확
 문제가 생기면 사용자가 명령을 직접 실행하기보다 [CODEX-PROMPTS.md](CODEX-PROMPTS.md)의 **변경 없이 진단만** 프롬프트를 에이전트에 전달하세요. 에이전트는 다음 명령의 I/O 차이와 매칭된 장치를 설명하고, 실기기 요청이 가능한 명령은 사용자의 명시적 확인을 받은 범위에서만 실행해야 합니다.
 
 ```powershell
+.\PeripheralBatteryDashboard.Diagnostics.exe --inventory
+.\PeripheralBatteryDashboard.Diagnostics.exe --self-test
 .\PeripheralBatteryDashboard.Diagnostics.exe --snapshot
 .\PeripheralBatteryDashboard.Diagnostics.exe --diagnostics
-.\PeripheralBatteryDashboard.Diagnostics.exe --self-test
 ```
 
+- `--inventory`: 미지원 기기 조사의 첫 단계입니다. Windows에 HID collection으로 노출된 USB 동글·유선·Bluetooth HID의 descriptor와, Windows에 등록된 표준 Bluetooth Battery Service의 메타데이터를 열거합니다. provider/battery 요청, HID input read·output write·Feature I/O, GATT characteristic 값 읽기는 전혀 수행하지 않습니다. HID에는 VID/PID·MI·Usage Page/Usage·보고서 길이와 가명 그룹 ID를, 표준 Bluetooth에는 가능한 VID 출처·VID/PID·best-effort 이름·이 PC 전용 가명 `localServiceId`를 출력합니다. 종료 코드가 0이고 `complete=true`, `profileWarningCount=0`일 때만 분류에 사용합니다. 이름은 외부 검색 전에 민감정보가 없는지 로컬에서 다시 확인하고, 가명 ID는 외부 검색·공개 프로필에 사용하지 않습니다. 표준 Battery Service가 없는 비 HID Bluetooth, XInput-only, audio-only 장치의 자동 발견은 보장하지 않습니다.
+- `--self-test`: 프로필 형식, 체크섬, 공급자 등록 같은 앱 자체 구성을 검사합니다. 장치 연결 여부와 무관하고 실제 장치 요청 없이 실행할 수 있습니다.
 - `--snapshot`: 현재 배터리 판독값을 JSON으로 출력합니다. 매칭된 기존 공급자의 검증된 상태 요청을 실제 장치에 보낼 수 있습니다.
 - `--diagnostics`: 배터리 상태, 적용 프로필, HID 컬렉션 정보를 텍스트로 출력합니다. 매칭된 기존 공급자의 검증된 상태 요청을 실제 장치에 보낼 수 있으며, 출력에서 장치 경로와 시리얼은 제외됩니다.
-- `--self-test`: 프로필 형식, 체크섬, 공급자 등록 같은 앱 자체 구성을 검사합니다. 장치 연결 여부와 무관하고 실제 장치 요청 없이 실행할 수 있습니다.
 
 GUI의 장치 관리 화면에서도 진단 정보를 파일로 내보낼 수 있습니다. 문의할 때는 이 파일을 사용하고, 장치 경로나 시리얼을 별도로 공유하지 마세요.
 
@@ -132,7 +134,7 @@ GUI의 장치 관리 화면에서도 진단 정보를 파일로 내보낼 수 �
 
 자동 실행은 현재 사용자의 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`에 등록됩니다. 설치 위치 변경이나 업데이트는 에이전트가 이 등록값과 앱 폴더를 함께 확인하며 수행하게 하세요.
 
-앱 폴더의 `Profiles\builtin.devices.json`은 기본 프로필입니다. 업데이트 시 덮어쓸 수 있으므로 직접 편집하지 말고, 에이전트가 생성·검증한 개인 프로필만 GUI의 **프로필 가져오기** 또는 위 사용자 프로필 폴더로 적용하게 하세요. 프로필과 플러그인은 시작할 때 읽으므로 변경 후 앱을 완전히 종료했다가 다시 실행해야 합니다.
+앱 폴더의 `Profiles\builtin.devices.json`은 배포 형식을 유지하기 위한 빈 프로필 문서이며 활성 기기를 포함하지 않습니다. 에이전트는 이 파일에 개인 장치를 추가하지 않고, 직접 조사·검증한 모든 장치를 위 사용자 프로필 폴더의 JSON에 등록해야 합니다. 프로필과 플러그인은 시작할 때 읽으므로 변경 후 앱을 완전히 종료했다가 다시 실행해야 합니다.
 
 장치 교체와 추가에는 [CODEX-PROMPTS.md](CODEX-PROMPTS.md)의 목적별 프롬프트를 사용하세요. [DEVICE-ADDING.md](DEVICE-ADDING.md)는 사용자가 따라 하는 설치 절차가 아니라 에이전트가 읽는 구현 참고 문서입니다.
 
@@ -149,13 +151,13 @@ GUI의 장치 관리 화면에서도 진단 정보를 파일로 내보낼 수 �
 에이전트는 프로젝트 폴더에서 다음을 실행합니다.
 
 ```powershell
-PowerShell -NoProfile -File .\build.ps1
+pwsh -NoProfile -File .\build.ps1
 ```
 
 디버그 심볼과 최적화 해제 빌드가 필요하면 다음을 사용합니다.
 
 ```powershell
-PowerShell -NoProfile -File .\build.ps1 -Configuration Debug
+pwsh -NoProfile -File .\build.ps1 -Configuration Debug
 ```
 
 스크립트는 VS 2022 Roslyn 컴파일러와 .NET Framework 참조 어셈블리를 자동으로 찾습니다. 먼저 `PeripheralBatteryDashboard.Runtime.dll`을 만든 다음 GUI와 Diagnostics 실행 파일이 그 공용 DLL을 함께 참조하게 합니다. 이 구조 덕분에 외부 플러그인의 `IBatteryProvider` 타입이 두 실행 파일에서 동일하게 유지됩니다.

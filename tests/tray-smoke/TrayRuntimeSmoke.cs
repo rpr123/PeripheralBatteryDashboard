@@ -94,6 +94,7 @@ internal static class SmokeRunner
         ProviderRegistry registry = new ProviderRegistry();
         BatteryReadContext context = new BatteryReadContext(new HidDeviceEnumerator());
         DeviceMonitorService monitor = new DeviceMonitorService(profiles, registry, context, settings);
+        SeedPresentReadings(monitor);
         ProfileStore profileStore = new ProfileStore(Path.Combine(testDirectory, "empty-profile-root"));
         AppSettingsStore settingsStore = new AppSettingsStore();
         DiagnosticsService diagnostics = new DiagnosticsService(profiles, registry, context);
@@ -115,12 +116,31 @@ internal static class SmokeRunner
             Assert(!window.IsVisible, "MainWindow became visible during construction");
             Assert(GetPrivateField(monitor, "_loopTask") == null,
                 "DeviceMonitorService unexpectedly started");
+            foreach (DeviceProfile profile in profiles)
+                window.ApplyReading(CreateReading(profile, DevicePresenceState.Present));
+            AssertMainWindowCardVisibility(window, true, profiles.Count,
+                "present hardware cards");
+            foreach (DeviceProfile profile in profiles)
+                window.ApplyReading(CreateReading(profile, DevicePresenceState.Absent));
+            AssertMainWindowCardVisibility(window, false, profiles.Count,
+                "absent hardware cards");
+            foreach (DeviceProfile profile in profiles)
+                window.ApplyReading(CreateReading(profile, DevicePresenceState.Present));
 
             ForceCleanup();
             beforeTray = ResourceCounts.Capture();
 
             tray = new TrayService(window, monitor, settings, delegate { });
             AssertPerDeviceState(tray, profiles.Count, "initial per-device mode");
+
+            foreach (DeviceProfile profile in profiles)
+                PushReading(tray, CreateReading(profile, DevicePresenceState.Absent));
+            AssertNoPresentDeviceState(tray, profiles.Count,
+                "all synthetic hardware absent");
+            foreach (DeviceProfile profile in profiles)
+                PushReading(tray, CreateReading(profile, DevicePresenceState.Present));
+            AssertPerDeviceState(tray, profiles.Count,
+                "synthetic hardware restored");
 
             settings.TrayIconMode = AppSettings.TrayIconModeCombined;
             InvokeApplyTrayMode(tray);
@@ -162,6 +182,8 @@ internal static class SmokeRunner
             AssertZeroSlotState(tray, "after Dispose");
             tray = null;
 
+            RunEmptyProfileTraySmoke(testDirectory);
+
             ForceCleanup();
             afterDispose = ResourceCounts.Capture();
 
@@ -178,7 +200,8 @@ internal static class SmokeRunner
             Console.WriteLine("Synthetic profiles: " + profiles.Count);
             Console.WriteLine("Mode switches: 1 initial round-trip + " +
                 ToggleCycles + " repeated round-trips");
-            Console.WriteLine("Initial per-device slots: 4 visible");
+            Console.WriteLine("Per-device slots: 4 visible when present, 0 when absent");
+            Console.WriteLine("No-device fallback slots: 1 visible");
             Console.WriteLine("Combined slots: 1 visible");
             Console.WriteLine("Disposed slots: 0");
             Console.WriteLine("Monitor started: false");
@@ -205,14 +228,53 @@ internal static class SmokeRunner
         }
     }
 
+    private static void RunEmptyProfileTraySmoke(string testDirectory)
+    {
+        List<DeviceProfile> profiles = new List<DeviceProfile>();
+        AppSettings settings = new AppSettings
+        {
+            NotificationsEnabled = false,
+            StartWithWindows = false,
+            TrayIconMode = AppSettings.TrayIconModePerDevice
+        };
+        ProviderRegistry registry = new ProviderRegistry();
+        BatteryReadContext context = new BatteryReadContext(new HidDeviceEnumerator());
+        DeviceMonitorService monitor = new DeviceMonitorService(profiles, registry,
+            context, settings);
+        MainWindow window = null;
+        TrayService tray = null;
+        try
+        {
+            ProfileStore profileStore = new ProfileStore(
+                Path.Combine(testDirectory, "empty-profile-root"));
+            window = new MainWindow(profiles, monitor, profileStore, settings,
+                new AppSettingsStore(), new DiagnosticsService(profiles, registry, context));
+            tray = new TrayService(window, monitor, settings, delegate { });
+            AssertNoPresentDeviceState(tray, 0, "empty public profile set");
+            Assert(GetPrivateField(monitor, "_loopTask") == null,
+                "empty-profile monitor unexpectedly started");
+        }
+        finally
+        {
+            if (tray != null)
+                tray.Dispose();
+            if (window != null)
+            {
+                try { window.Close(); }
+                catch { }
+            }
+            monitor.Dispose();
+        }
+    }
+
     private static List<DeviceProfile> BuildProfiles()
     {
         string[] names =
         {
-            "Arctis Nova 7 Gen 2",
-            "AULA F108 Pro",
-            "VXE R1 SE+",
-            "Xbox Wireless Controller"
+            "Fixture Headset",
+            "Fixture Keyboard",
+            "Fixture Mouse",
+            "Fixture Gamepad"
         };
         string[] categories = { "headset", "keyboard", "mouse", "gamepad" };
         List<DeviceProfile> profiles = new List<DeviceProfile>();
@@ -230,6 +292,69 @@ internal static class SmokeRunner
             });
         }
         return profiles;
+    }
+
+    private static void SeedPresentReadings(DeviceMonitorService monitor)
+    {
+        IEnumerable runtimes = GetPrivateField(monitor, "_devices") as IEnumerable;
+        Assert(runtimes != null, "monitor runtimes are unavailable");
+        foreach (object runtime in runtimes)
+        {
+            DeviceProfile profile = (DeviceProfile)GetFieldValue(runtime, "Profile");
+            SetFieldValue(runtime, "Presence", DevicePresenceState.Present);
+            SetFieldValue(runtime, "LastReading",
+                CreateReading(profile, DevicePresenceState.Present));
+        }
+    }
+
+    private static BatteryReading CreateReading(DeviceProfile profile,
+        DevicePresenceState presence)
+    {
+        return new BatteryReading
+        {
+            ProfileId = profile.Id,
+            DisplayName = profile.DisplayName,
+            Category = profile.Category,
+            Presence = presence,
+            Connection = presence == DevicePresenceState.Present
+                ? DeviceConnectionState.Connected
+                : DeviceConnectionState.Disconnected,
+            Percent = presence == DevicePresenceState.Present ? (int?)78 : null,
+            Band = presence == DevicePresenceState.Present
+                ? BatteryLevelBand.High
+                : BatteryLevelBand.Unknown,
+            StatusText = presence == DevicePresenceState.Present ? "연결됨" : "현재 장치 없음",
+            SampledAtUtc = DateTime.UtcNow
+        };
+    }
+
+    private static void PushReading(TrayService tray, BatteryReading reading)
+    {
+        MethodInfo method = typeof(TrayService).GetMethod("MonitorOnReadingUpdated",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(method != null, "TrayService reading handler was not found");
+        method.Invoke(tray, new object[] { null, new BatteryReadingEventArgs(reading) });
+        Forms.Application.DoEvents();
+    }
+
+    private static void AssertMainWindowCardVisibility(MainWindow window,
+        bool expectedVisible, int expectedCount, string phase)
+    {
+        IDictionary cards = GetPrivateField(window, "_cards") as IDictionary;
+        Assert(cards != null && cards.Count == expectedCount,
+            phase + ": unexpected card count");
+        foreach (DictionaryEntry entry in cards)
+        {
+            PropertyInfo rootProperty = entry.Value.GetType().GetProperty("Root",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert(rootProperty != null, phase + ": card Root was not found");
+            System.Windows.UIElement root = rootProperty.GetValue(entry.Value, null)
+                as System.Windows.UIElement;
+            Assert(root != null, phase + ": card Root is unavailable");
+            bool isVisible = root.Visibility == System.Windows.Visibility.Visible;
+            Assert(isVisible == expectedVisible,
+                phase + ": unexpected visibility for " + entry.Key);
+        }
     }
 
     private static void InvokeApplyTrayMode(TrayService tray)
@@ -253,11 +378,29 @@ internal static class SmokeRunner
             Assert(icon != null, phase + ": slot has no NotifyIcon");
             Assert(icon.Visible, phase + ": NotifyIcon is not visible for " + entry.Key);
         }
-        Assert(GetPrivateField(tray, "_combinedSlot") == null,
-            phase + ": combined slot should be null");
+        object fallbackSlot = GetPrivateField(tray, "_combinedSlot");
+        Assert(fallbackSlot != null,
+            phase + ": no-device fallback slot is missing");
+        Assert(!GetSlotNotifyIcon(fallbackSlot).Visible,
+            phase + ": no-device fallback should be hidden");
         Assert(string.Equals((string)GetPrivateField(tray, "_activeMode"),
             AppSettings.TrayIconModePerDevice, StringComparison.Ordinal),
             phase + ": active mode is not per-device");
+    }
+
+    private static void AssertNoPresentDeviceState(TrayService tray, int expectedCount,
+        string phase)
+    {
+        IDictionary slots = GetDeviceSlots(tray);
+        Assert(slots.Count == expectedCount,
+            phase + ": expected " + expectedCount + " retained slots, found " + slots.Count);
+        foreach (DictionaryEntry entry in slots)
+            Assert(!GetSlotNotifyIcon(entry.Value).Visible,
+                phase + ": absent device icon is visible for " + entry.Key);
+
+        object fallbackSlot = GetPrivateField(tray, "_combinedSlot");
+        Assert(fallbackSlot != null && GetSlotNotifyIcon(fallbackSlot).Visible,
+            phase + ": generic app fallback icon is not visible");
     }
 
     private static void AssertCombinedState(TrayService tray, string phase)
@@ -298,9 +441,25 @@ internal static class SmokeRunner
     private static object GetPrivateField(object target, string name)
     {
         FieldInfo field = target.GetType().GetField(name,
-            BindingFlags.Instance | BindingFlags.NonPublic);
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         Assert(field != null, "private field was not found: " + name);
         return field.GetValue(target);
+    }
+
+    private static object GetFieldValue(object target, string name)
+    {
+        FieldInfo field = target.GetType().GetField(name,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert(field != null, "field was not found: " + name);
+        return field.GetValue(target);
+    }
+
+    private static void SetFieldValue(object target, string name, object value)
+    {
+        FieldInfo field = target.GetType().GetField(name,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert(field != null, "field was not found: " + name);
+        field.SetValue(target, value);
     }
 
     private static void CreateIconQaSheet(Type trayType, string outputPath)

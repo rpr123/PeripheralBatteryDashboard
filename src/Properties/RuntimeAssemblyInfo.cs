@@ -6,4 +6,4 @@ using System.Reflection;
 [assembly: AssemblyCompany("rpr123")]
 [assembly: AssemblyCopyright("Copyright © 2026 rpr123")]
 [assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.4.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]

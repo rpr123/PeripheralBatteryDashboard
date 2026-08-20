@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using Forms = System.Windows.Forms;
@@ -164,11 +165,11 @@ namespace PeripheralBatteryDashboard.UI
                 return;
             }
 
-            if (string.Equals(desiredMode, PerDeviceMode, StringComparison.Ordinal) &&
-                _orderedProfiles.Count > 0)
+            if (string.Equals(desiredMode, PerDeviceMode, StringComparison.Ordinal))
             {
                 Dictionary<string, TrayIconSlot> replacement =
                     new Dictionary<string, TrayIconSlot>(StringComparer.OrdinalIgnoreCase);
+                TrayIconSlot fallbackReplacement = null;
                 try
                 {
                     foreach (DeviceProfile profile in _orderedProfiles)
@@ -177,11 +178,14 @@ namespace PeripheralBatteryDashboard.UI
                         replacement[profile.Id] = slot;
                         UpdateDeviceSlot(slot, profile, GetReading(profile.Id));
                     }
-                    foreach (TrayIconSlot slot in replacement.Values)
-                        slot.NotifyIcon.Visible = true;
+                    fallbackReplacement = CreateSlot(string.Empty);
+                    UpdateCombinedSlot(fallbackReplacement);
+                    fallbackReplacement.NotifyIcon.Visible = !replacement.Values.Any(slot =>
+                        slot.NotifyIcon.Visible);
                 }
                 catch
                 {
+                    DisposeSlot(fallbackReplacement);
                     DisposeSlots(replacement);
                     throw;
                 }
@@ -189,6 +193,7 @@ namespace PeripheralBatteryDashboard.UI
                 DisposeCombinedSlot();
                 DisposeSlots(_deviceSlots);
                 _deviceSlots = replacement;
+                _combinedSlot = fallbackReplacement;
                 _activeMode = PerDeviceMode;
                 return;
             }
@@ -260,7 +265,8 @@ namespace PeripheralBatteryDashboard.UI
                 _readings[reading.ProfileId] = reading;
                 _profiles.TryGetValue(reading.ProfileId, out profile);
 
-                bool isUsableReading = reading.Connection == DeviceConnectionState.Connected && !reading.IsStale;
+                bool isUsableReading = reading.IsPresent &&
+                    reading.Connection == DeviceConnectionState.Connected && !reading.IsStale;
                 int threshold = profile == null ? 20 : Math.Max(1, Math.Min(99, profile.LowBatteryPercent));
                 bool isLow = isUsableReading && reading.Charge != DeviceChargeState.Charging &&
                     ((reading.Percent.HasValue && reading.Percent.Value <= threshold) ||
@@ -273,7 +279,9 @@ namespace PeripheralBatteryDashboard.UI
                       (reading.Band == BatteryLevelBand.Medium || reading.Band == BatteryLevelBand.High ||
                        reading.Band == BatteryLevelBand.Full)));
 
-                if (recovered)
+                if (!reading.IsPresent)
+                    _lowBatteryNotifications.Remove(reading.ProfileId);
+                else if (recovered)
                     _lowBatteryNotifications.Remove(reading.ProfileId);
                 else if (isLow && _settings.NotificationsEnabled &&
                          !_lowBatteryNotifications.Contains(reading.ProfileId))
@@ -288,7 +296,10 @@ namespace PeripheralBatteryDashboard.UI
             RunOnUiThread(delegate
             {
                 if (string.Equals(_activeMode, PerDeviceMode, StringComparison.Ordinal))
+                {
                     UpdateDeviceSlot(reading.ProfileId);
+                    UpdatePerDeviceFallbackVisibility();
+                }
                 else
                     UpdateCombinedSlot();
 
@@ -310,6 +321,7 @@ namespace PeripheralBatteryDashboard.UI
         {
             foreach (DeviceProfile profile in _orderedProfiles)
                 UpdateDeviceSlot(profile.Id);
+            UpdatePerDeviceFallbackVisibility();
         }
 
         private void UpdateDeviceSlot(string profileId)
@@ -328,6 +340,19 @@ namespace PeripheralBatteryDashboard.UI
             TrayVisual visual = CreateDeviceVisual(profile, reading);
             ApplyVisual(slot, visual);
             slot.NotifyIcon.Text = TruncateToolTip(BuildDeviceToolTip(profile, reading));
+            slot.NotifyIcon.Visible = reading != null && reading.IsPresent;
+        }
+
+        private void UpdatePerDeviceFallbackVisibility()
+        {
+            if (_combinedSlot == null ||
+                !string.Equals(_activeMode, PerDeviceMode, StringComparison.Ordinal))
+                return;
+
+            bool anyVisible = _deviceSlots.Values.Any(slot => slot.NotifyIcon.Visible);
+            if (!anyVisible)
+                UpdateCombinedSlot(_combinedSlot);
+            _combinedSlot.NotifyIcon.Visible = !anyVisible;
         }
 
         private void UpdateCombinedSlot()
@@ -341,7 +366,9 @@ namespace PeripheralBatteryDashboard.UI
             DeviceProfile representativeProfile;
             BatteryReading representative;
             bool anyUnknown;
-            SelectCombinedReading(out representativeProfile, out representative, out anyUnknown);
+            bool anyPresent;
+            SelectCombinedReading(out representativeProfile, out representative,
+                out anyUnknown, out anyPresent);
 
             TrayVisual visual;
             string tooltip;
@@ -351,6 +378,12 @@ namespace PeripheralBatteryDashboard.UI
                 tooltip = representative.Percent.HasValue
                     ? "주변기기 배터리 · 최저 " + ClampPercent(representative.Percent.Value) + "%"
                     : "주변기기 배터리 · " + SafeStatus(representative.StatusText, "잔량 단계 확인됨");
+            }
+            else if (anyPresent)
+            {
+                visual = CreateSimpleVisual("—", Color.FromArgb(255, 102, 116, 139), false,
+                    "combined-present-unavailable", "combined");
+                tooltip = "주변기기 배터리 · 감지됨 · 응답 대기";
             }
             else if (anyUnknown)
             {
@@ -370,11 +403,12 @@ namespace PeripheralBatteryDashboard.UI
         }
 
         private void SelectCombinedReading(out DeviceProfile representativeProfile,
-            out BatteryReading representative, out bool anyUnknown)
+            out BatteryReading representative, out bool anyUnknown, out bool anyPresent)
         {
             representativeProfile = null;
             representative = null;
             anyUnknown = false;
+            anyPresent = false;
 
             lock (_stateLock)
             {
@@ -389,6 +423,9 @@ namespace PeripheralBatteryDashboard.UI
 
                     if (candidate.Connection == DeviceConnectionState.Unknown)
                         anyUnknown = true;
+                    if (!candidate.IsPresent)
+                        continue;
+                    anyPresent = true;
                     if (candidate.Connection != DeviceConnectionState.Connected || candidate.IsStale)
                         continue;
 

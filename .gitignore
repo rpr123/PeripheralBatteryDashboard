@@ -4,6 +4,8 @@ dist/
 dist-*/
 work/
 artifacts/
+artifacts-*/
+tray-smoke-*/
 
 # Local probes and generated binaries
 _compile_probe.*

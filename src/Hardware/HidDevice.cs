@@ -24,6 +24,8 @@ namespace PeripheralBatteryDashboard.Hardware
         public ushort InputReportLength { get; internal set; }
         public ushort OutputReportLength { get; internal set; }
         public ushort FeatureReportLength { get; internal set; }
+        public bool CapabilitiesAvailable { get; internal set; }
+        internal Guid? ContainerId { get; set; }
         public int? InterfaceNumber { get; internal set; }
         public string ProductName { get; internal set; }
 
@@ -55,8 +57,16 @@ namespace PeripheralBatteryDashboard.Hardware
                 return false;
             if (!profile.Match.ParsedProductIds.Contains(ProductId))
                 return false;
-            if (profile.Match.InterfaceNumber.HasValue && InterfaceNumber != profile.Match.InterfaceNumber)
+            if (profile.Match.RequireNoInterfaceNumber)
+            {
+                if (InterfaceNumber.HasValue)
+                    return false;
+            }
+            else if (profile.Match.InterfaceNumber.HasValue &&
+                     InterfaceNumber != profile.Match.InterfaceNumber)
+            {
                 return false;
+            }
             ushort? usagePage = profile.Match.ParsedUsagePage;
             if (usagePage.HasValue && UsagePage != usagePage.Value)
                 return false;
@@ -67,19 +77,44 @@ namespace PeripheralBatteryDashboard.Hardware
         }
     }
 
+    public sealed class HidEnumerationResult
+    {
+        public IList<HidDeviceDescriptor> Devices { get; private set; }
+        public IList<string> WarningCodes { get; private set; }
+
+        public bool Complete { get { return WarningCodes.Count == 0; } }
+
+        internal HidEnumerationResult(IList<HidDeviceDescriptor> devices,
+            IList<string> warningCodes)
+        {
+            Devices = devices ?? new List<HidDeviceDescriptor>();
+            WarningCodes = warningCodes ?? new List<string>();
+        }
+    }
+
+    // INVENTORY_METADATA_ENUMERATOR_BEGIN
     public sealed class HidDeviceEnumerator
     {
         private static readonly Regex InterfaceRegex = new Regex("&mi_([0-9a-f]{2})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public IList<HidDeviceDescriptor> Enumerate()
         {
+            return EnumerateMetadata().Devices;
+        }
+
+        public HidEnumerationResult EnumerateMetadata()
+        {
             List<HidDeviceDescriptor> result = new List<HidDeviceDescriptor>();
+            List<string> warningCodes = new List<string>();
             Guid hidGuid;
             HidNative.HidD_GetHidGuid(out hidGuid);
             IntPtr infoSet = HidNative.SetupDiGetClassDevs(ref hidGuid, null, IntPtr.Zero,
                 HidNative.DIGCF_PRESENT | HidNative.DIGCF_DEVICEINTERFACE);
             if (infoSet == HidNative.INVALID_HANDLE_VALUE)
-                throw new Win32Exception(Marshal.GetLastWin32Error());
+            {
+                AddWarning(warningCodes, "hid-device-set-open-failed");
+                return new HidEnumerationResult(result, warningCodes);
+            }
 
             try
             {
@@ -93,6 +128,7 @@ namespace PeripheralBatteryDashboard.Hardware
                         int error = Marshal.GetLastWin32Error();
                         if (error == HidNative.ERROR_NO_MORE_ITEMS)
                             break;
+                        AddWarning(warningCodes, "hid-interface-enumeration-failed");
                         index++;
                         continue;
                     }
@@ -101,21 +137,52 @@ namespace PeripheralBatteryDashboard.Hardware
                     uint requiredSize;
                     HidNative.SetupDiGetDeviceInterfaceDetail(infoSet, ref interfaceData, IntPtr.Zero, 0, out requiredSize, IntPtr.Zero);
                     if (requiredSize == 0)
+                    {
+                        AddWarning(warningCodes, "hid-interface-detail-size-failed");
                         continue;
+                    }
 
                     IntPtr detail = Marshal.AllocHGlobal((int)requiredSize);
                     try
                     {
                         Marshal.WriteInt32(detail, IntPtr.Size == 8 ? 8 : 6);
-                        if (!HidNative.SetupDiGetDeviceInterfaceDetail(infoSet, ref interfaceData, detail, requiredSize, out requiredSize, IntPtr.Zero))
+                        HidNative.SP_DEVINFO_DATA deviceInfo = new HidNative.SP_DEVINFO_DATA();
+                        deviceInfo.cbSize = Marshal.SizeOf(typeof(HidNative.SP_DEVINFO_DATA));
+                        if (!HidNative.SetupDiGetDeviceInterfaceDetailWithDeviceInfo(infoSet,
+                            ref interfaceData, detail, requiredSize, out requiredSize,
+                            ref deviceInfo))
+                        {
+                            AddWarning(warningCodes, "hid-interface-detail-failed");
                             continue;
+                        }
 
                         string path = Marshal.PtrToStringUni(IntPtr.Add(detail, 4));
                         if (string.IsNullOrEmpty(path))
+                        {
+                            AddWarning(warningCodes, "hid-interface-path-empty");
                             continue;
-                        HidDeviceDescriptor descriptor = ReadDescriptor(path);
+                        }
+                        HidDeviceDescriptor descriptor;
+                        try
+                        {
+                            descriptor = ReadDescriptor(path);
+                        }
+                        catch
+                        {
+                            AddWarning(warningCodes, "hid-descriptor-read-failed");
+                            continue;
+                        }
                         if (descriptor != null)
+                        {
+                            descriptor.ContainerId = ReadContainerId(infoSet, ref deviceInfo);
+                            if (!descriptor.CapabilitiesAvailable)
+                                AddWarning(warningCodes, "hid-capabilities-unavailable");
                             result.Add(descriptor);
+                        }
+                        else
+                        {
+                            AddWarning(warningCodes, "hid-descriptor-read-failed");
+                        }
                     }
                     finally
                     {
@@ -128,13 +195,14 @@ namespace PeripheralBatteryDashboard.Hardware
                 HidNative.SetupDiDestroyDeviceInfoList(infoSet);
             }
 
-            return result
+            IList<HidDeviceDescriptor> ordered = result
                 .OrderBy(d => d.VendorId)
                 .ThenBy(d => d.ProductId)
                 .ThenBy(d => d.InterfaceNumber ?? 255)
                 .ThenBy(d => d.UsagePage)
                 .ThenBy(d => d.Usage)
                 .ToList();
+            return new HidEnumerationResult(ordered, warningCodes);
         }
 
         public HidDeviceDescriptor Find(DeviceProfile profile)
@@ -186,6 +254,7 @@ namespace PeripheralBatteryDashboard.Hardware
                             descriptor.InputReportLength = caps.InputReportByteLength;
                             descriptor.OutputReportLength = caps.OutputReportByteLength;
                             descriptor.FeatureReportLength = caps.FeatureReportByteLength;
+                            descriptor.CapabilitiesAvailable = true;
                         }
                     }
                     finally
@@ -219,27 +288,68 @@ namespace PeripheralBatteryDashboard.Hardware
                 return null;
             return Convert.ToInt32(match.Groups[1].Value, 16);
         }
+
+        private static Guid? ReadContainerId(IntPtr infoSet,
+            ref HidNative.SP_DEVINFO_DATA deviceInfo)
+        {
+            byte[] buffer = new byte[16];
+            uint propertyType;
+            uint requiredSize;
+            HidNative.DEVPROPKEY key = new HidNative.DEVPROPKEY
+            {
+                fmtid = new Guid("8C7ED206-3F8A-4827-B3AB-AE9E1FAEFC6C"),
+                pid = 2
+            };
+            if (!HidNative.SetupDiGetDeviceProperty(infoSet, ref deviceInfo, ref key,
+                out propertyType, buffer, (uint)buffer.Length, out requiredSize, 0) ||
+                propertyType != HidNative.DEVPROP_TYPE_GUID || requiredSize != 16)
+                return null;
+            return new Guid(buffer);
+        }
+
+        private static void AddWarning(ICollection<string> warnings, string code)
+        {
+            if (!warnings.Contains(code))
+                warnings.Add(code);
+        }
     }
+
+    // INVENTORY_METADATA_ENUMERATOR_END
 
     public sealed class HidSession : IDisposable
     {
         private SafeFileHandle _handle;
         private FileStream _stream;
+        private bool _canWrite;
         private bool _disposed;
 
         public HidDeviceDescriptor Descriptor { get; private set; }
 
-        private HidSession(HidDeviceDescriptor descriptor, SafeFileHandle handle)
+        private HidSession(HidDeviceDescriptor descriptor, SafeFileHandle handle,
+            FileAccess access, bool canWrite)
         {
             Descriptor = descriptor;
             _handle = handle;
-            _stream = new FileStream(handle, FileAccess.ReadWrite, 4096, true);
+            _stream = new FileStream(handle, access, 4096, true);
+            _canWrite = canWrite;
         }
 
         public static HidSession Open(HidDeviceDescriptor descriptor)
         {
+            return OpenCore(descriptor, HidNative.GENERIC_READ | HidNative.GENERIC_WRITE,
+                FileAccess.ReadWrite, true);
+        }
+
+        public static HidSession OpenReadOnly(HidDeviceDescriptor descriptor)
+        {
+            return OpenCore(descriptor, HidNative.GENERIC_READ, FileAccess.Read, false);
+        }
+
+        private static HidSession OpenCore(HidDeviceDescriptor descriptor, uint desiredAccess,
+            FileAccess access, bool canWrite)
+        {
             SafeFileHandle handle = HidNative.CreateFile(descriptor.DevicePath,
-                HidNative.GENERIC_READ | HidNative.GENERIC_WRITE,
+                desiredAccess,
                 HidNative.FILE_SHARE_READ | HidNative.FILE_SHARE_WRITE,
                 IntPtr.Zero,
                 HidNative.OPEN_EXISTING,
@@ -251,7 +361,7 @@ namespace PeripheralBatteryDashboard.Hardware
                 handle.Dispose();
                 throw new IOException("HID 장치를 열 수 없습니다.", new Win32Exception(error));
             }
-            return new HidSession(descriptor, handle);
+            return new HidSession(descriptor, handle, access, canWrite);
         }
 
         public byte[] PrepareOutputReport(byte[] data)
@@ -265,6 +375,7 @@ namespace PeripheralBatteryDashboard.Hardware
         public bool SetOutputReport(byte[] data)
         {
             ThrowIfDisposed();
+            ThrowIfReadOnly();
             byte[] report = PrepareOutputReport(data);
             return HidNative.HidD_SetOutputReport(_handle, report, report.Length);
         }
@@ -272,6 +383,7 @@ namespace PeripheralBatteryDashboard.Hardware
         public bool SetFeature(byte[] data)
         {
             ThrowIfDisposed();
+            ThrowIfReadOnly();
             int length = Math.Max(data.Length, Descriptor.FeatureReportLength);
             byte[] report = new byte[length];
             Buffer.BlockCopy(data, 0, report, 0, Math.Min(data.Length, report.Length));
@@ -292,6 +404,7 @@ namespace PeripheralBatteryDashboard.Hardware
         public async Task WriteInterruptAsync(byte[] data, int timeoutMilliseconds, CancellationToken token)
         {
             ThrowIfDisposed();
+            ThrowIfReadOnly();
             byte[] report = PrepareOutputReport(data);
             Task writeTask = _stream.WriteAsync(report, 0, report.Length, token);
             Task delay = Task.Delay(timeoutMilliseconds, token);
@@ -345,6 +458,12 @@ namespace PeripheralBatteryDashboard.Hardware
                 throw new ObjectDisposedException("HidSession");
         }
 
+        private void ThrowIfReadOnly()
+        {
+            if (!_canWrite)
+                throw new InvalidOperationException("읽기 전용 HID 세션에서는 보고서를 보낼 수 없습니다.");
+        }
+
         public void Dispose()
         {
             if (_disposed)
@@ -369,6 +488,7 @@ namespace PeripheralBatteryDashboard.Hardware
         internal const uint DIGCF_PRESENT = 0x00000002;
         internal const uint DIGCF_DEVICEINTERFACE = 0x00000010;
         internal const int ERROR_NO_MORE_ITEMS = 259;
+        internal const uint DEVPROP_TYPE_GUID = 0x0000000D;
         internal static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
         internal const uint GENERIC_READ = 0x80000000;
@@ -385,6 +505,22 @@ namespace PeripheralBatteryDashboard.Hardware
             public Guid InterfaceClassGuid;
             public int Flags;
             public UIntPtr Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct SP_DEVINFO_DATA
+        {
+            public int cbSize;
+            public Guid ClassGuid;
+            public uint DevInst;
+            public UIntPtr Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct DEVPROPKEY
+        {
+            public Guid fmtid;
+            public uint pid;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -469,6 +605,30 @@ namespace PeripheralBatteryDashboard.Hardware
         [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool SetupDiGetDeviceInterfaceDetail(IntPtr DeviceInfoSet, ref SP_DEVICE_INTERFACE_DATA DeviceInterfaceData, IntPtr DeviceInterfaceDetailData, uint DeviceInterfaceDetailDataSize, out uint RequiredSize, IntPtr DeviceInfoData);
+
+        [DllImport("setupapi.dll", EntryPoint = "SetupDiGetDeviceInterfaceDetailW",
+            CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SetupDiGetDeviceInterfaceDetailWithDeviceInfo(
+            IntPtr DeviceInfoSet,
+            ref SP_DEVICE_INTERFACE_DATA DeviceInterfaceData,
+            IntPtr DeviceInterfaceDetailData,
+            uint DeviceInterfaceDetailDataSize,
+            out uint RequiredSize,
+            ref SP_DEVINFO_DATA DeviceInfoData);
+
+        [DllImport("setupapi.dll", EntryPoint = "SetupDiGetDevicePropertyW",
+            CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SetupDiGetDeviceProperty(
+            IntPtr DeviceInfoSet,
+            ref SP_DEVINFO_DATA DeviceInfoData,
+            ref DEVPROPKEY PropertyKey,
+            out uint PropertyType,
+            [Out] byte[] PropertyBuffer,
+            uint PropertyBufferSize,
+            out uint RequiredSize,
+            uint Flags);
 
         [DllImport("setupapi.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
