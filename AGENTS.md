@@ -2,6 +2,19 @@
 
 These instructions apply to every automated coding agent working in this repository. User instructions remain authoritative, but do not weaken the device-safety and privacy rules below.
 
+## Document ownership and conflict handling
+
+The current user request defines the task scope and desired outcome, subject to the non-negotiable device-safety, approval and privacy boundaries in this file. Repository documents have field-specific ownership rather than equal or interchangeable authority:
+
+- `README.md` is the public user guide and product contract. It owns the product purpose, current official distribution links, user-visible behavior and screen semantics, installation expectations, and post-install user workflows.
+- `AGENTS.md` is the mandatory execution policy for coding agents. It owns safety, approvals, privacy, repository invariants, implementation constraints, validation requirements and publishing gates.
+- `CODEX-PROMPTS.md` contains purpose-specific request templates for users. A copied prompt initiates a task but does not redefine or weaken repository policy.
+- `DEVICE-ADDING.md` owns the evidence, investigation, implementation, fixture and real-device validation procedure for adding device compatibility.
+
+Keep canonical policy and workflow detail in the document that owns the subject. Other documents may include the minimum audience-appropriate summary or task-entry instructions needed to invoke that policy or workflow, but they must not redefine, weaken or silently fork the owning document. Update `README.md` when public distribution or user-visible behavior changes; update `AGENTS.md` when agent rules or implementation and validation invariants change; update both only when both audiences are affected.
+
+If documents disagree, do not silently merge them or choose the more convenient instruction. Preserve the strictest applicable safety, approval, privacy, validation and publishing boundary, stop only the disputed step, verify the implementation or public Release state, and report the conflict. Update the owning document only when documentation changes are within the user's approved task scope; otherwise request clarification and leave the disputed step pending.
+
 ## Purpose and distribution baseline
 
 This is a Windows 10/11 x64 WPF tray application targeting .NET Framework 4.8. It reads battery state from Bluetooth/XInput devices and from narrowly matched HID collections. The application itself must continue to run without Codex or another LLM after installation.
@@ -20,15 +33,25 @@ These are reusable protocol implementations, not default device registrations. D
 
 Missing protocol material is a required research task, not an immediate blocker. Never stop merely because the repository lacks a protocol or the user did not provide documentation, captures or command bytes. Request approval for the redacted network research scope, then directly search manufacturer documentation/support/downloads, legally reviewable web-driver assets, auditable device-specific open source and public raw source using the query matrix below. A `blocked` result without the concrete queries, URLs and source classes actually checked is a failed task.
 
+## Official distribution handling
+
+`README.md` owns the current public version and exact Release URLs. For an official binary installation or update, obtain the uploaded Windows package named `PeripheralBatteryDashboard-v<version>-win-x64.zip` and `SHA256SUMS.txt` from the same non-draft, non-prerelease GitHub Release of this repository.
+
+GitHub-generated `Source code (zip)` and `Source code (tar.gz)` archives, GitHub Actions artifacts, repository-tree archives, mirrors, and similarly named files from another ref are not official installation packages. Before extraction or execution, verify the repository, tag, asset names, absence of duplicate named assets, and SHA-256 entry. Stop and report any mismatch; do not substitute an older package or another distribution source.
+
+Use source for an installation only when modification or a source build is required and separately approved. Pin that work to the same official tag identified by `README.md`, unless the user explicitly commissioned work on another ref. The final report must distinguish an unchanged official Release package from a locally built or modified derivative, even when both display the same application version.
+
+Do not bypass SmartScreen, execution policy or other Windows security controls for an unsigned package. Show the verified source and hash result and obtain the required execution approval.
+
 ## Required reading and first actions
 
-Before changing files, read in this order:
+Before changing files, read the documents relevant to the task:
 
-1. `README.md`
-2. `CODEX-PROMPTS.md`
-3. `DEVICE-ADDING.md`
-4. `Profiles/builtin.devices.json`
-5. `Plugins/README.md` and `Plugins/SamplePlugin.cs.txt` when plugin work is in scope
+- Always read `README.md` for the current official distribution and user-visible behavior.
+- Read `CODEX-PROMPTS.md` when executing, reviewing or editing a documented installation, update, diagnostics, device-addition or removal flow.
+- Read `DEVICE-ADDING.md` when device discovery, protocol research, profile work, provider implementation, fixture work or real-device validation is in scope.
+- Read `Profiles/builtin.devices.json` when device, profile, provider or packaging work is in scope.
+- Read `Plugins/README.md` and `Plugins/SamplePlugin.cs.txt` when plugin work is in scope.
 
 Start with read-only inspection. Check the working tree and preserve unrelated user changes. Identify the requested outcome, every target device/transport, available evidence and the smallest appropriate layer:
 
@@ -82,9 +105,17 @@ Do not interpret a request to diagnose or adapt a device as authorization to pub
 
 Before the first GUI run, ask whether per-user auto-start should be enabled. Explain the complete settings file or HKCU Run value that will be written, and that the monitor starts immediately and can invoke exact-match existing providers. Obtain separate approval for the settings/registry change and the first GUI/device-I/O execution. If auto-start is declined, prepare a complete `StartWithWindows=false` settings file only after approval; if the user does not approve the required write or GUI run, leave that step pending. Apply the same disclosure and approval before restarting the GUI to load a newly placed profile or plugin.
 
-`--self-test` validates application structure without querying connected hardware. `--inventory` is the first unsupported-device discovery step: it enumerates redacted HID descriptor and standard Bluetooth Battery Service interface metadata and performs no provider/battery request, HID input read/output/Feature I/O, or GATT characteristic value read. Explain its target and redacted fields and obtain approval before collecting the inventory. In contrast, `--diagnostics` and `--snapshot` can invoke a matched existing provider and send its already validated battery/status request to a real device. Describe that behavior and the exact matched provider, then wait for the user's explicit confirmation before using those commands; never present them as passive file inspection.
-
 Before the first real-device execution of any newly implemented command, show the user the exact VID, PID, interface number, Usage Page/Usage, report type and length, transmitted bytes, read-only evidence, expected response, and failure impact. Obtain separate approval for that execution. When the evidence remains insufficient after the required public research, `blocked` support plus the searched sources and a precise list of missing evidence is a successful and preferred outcome.
+
+## Diagnostic command contract
+
+- `--self-test` validates application structure without querying connected hardware.
+- `--inventory` is passive device discovery. It may enumerate redacted HID descriptors and Windows-registered standard Bluetooth Battery Service interface metadata, but it must not invoke a provider, read a HID input report, send HID output or Feature I/O, or read a GATT characteristic value. Explain its target and redacted fields and obtain approval before collecting it.
+- Treat inventory as complete enough for classification only when the process exits with code 0, `complete=true`, `profileWarningCount=0`, and the relevant `coverage` fields support the claim. A timeout, warning, incomplete coverage or nonzero exit is an incomplete observation, not proof that a device or protocol is absent.
+- `--snapshot` and `--diagnostics` may invoke an exact-matched existing provider and send its validated battery/status request to a real device. Disclose the matched profile and ProviderId, the expected I/O and output, then wait for explicit confirmation. Never describe either command as passive inspection.
+- Preserve the per-profile watchdog boundary for live diagnostics. A timed-out native operation must be recorded as unavailable and must not block later profiles. Any remaining native work must end with the diagnostics process; a timeout must not be converted into a successful reading or an unsupported-device conclusion.
+
+Use only redacted output in reports. A pseudonymous `localServiceId`, complete device path, serial number, Bluetooth address or arbitrary product string is not safe for external sharing merely because it appeared in diagnostic output; apply the privacy rules below.
 
 ## Privacy and repository hygiene
 
@@ -103,11 +134,42 @@ Before the first real-device execution of any newly implemented command, show th
 - Generic BAS profiles require a valid per-PC `BluetoothServiceId`; VID/PID are optional supplemental AND conditions. Use `BluetoothNameContains` only as a reviewed additional AND condition and fail closed when the name is missing or different. The standard 2A19 value proves percentage only; do not infer charging state. Preserve presence when the exact service exists but the value is temporarily unreadable, and reject ambiguous or incompletely enumerated multiple-match candidates.
 - A custom provider for Bluetooth devices without BAS may still use `Transport=bluetooth-gatt`, but it must not reuse the BAS `BluetoothServiceId`; require exact VID/PID and make the vendor service/characteristic identity explicit in the provider and its evidence-backed tests.
 - The Xbox provider does not supply an implicit Microsoft VID/PID. Exact Bluetooth GATT use requires explicit profile VID/PID; only a separately verified fixed `XInputUserIndex` plus `AllowUnboundXInput=true` may use the non-identity XInput fallback.
-- External plugins must reference `PeripheralBatteryDashboard.Runtime.dll`, never either EXE.
 - A plugin `ProviderId` must be unique and must exactly match its profile.
 - Preserve Windows 10/11 x64 and .NET Framework 4.8 compatibility unless the user explicitly requests a migration.
 - Preserve the 15/30/60/120-second polling choices, failure backoff and Bluetooth cache behavior unless the request specifically concerns them.
 - Do not edit generated distribution folders as source. Make source/document/profile changes at the repository root and rebuild.
+
+## Runtime isolation and recovery invariants
+
+- Preserve the existing out-of-process Diagnostics-helper isolation for HID provider reads performed by the dashboard monitor. One-shot `--diagnostics` and `--snapshot` use the separate in-process watchdog contract above. A blocking Windows or driver call must not be allowed to hang the dashboard process.
+- On a dashboard-worker timeout, terminate the assigned job/process tree and confirm the helper process has exited before releasing the affected I/O ownership keys. Do not start overlapping workers for the same device I/O ownership key while the previous worker may still own native I/O.
+- Treat timeout, disconnect and temporary access failure as transient availability results. They must not permanently quarantine a profile for the remainder of the app run. Keep the failure backoff, then use a new helper process on a later scheduled or manual refresh. One device failure must not prevent other profiles from completing.
+- Preserve the exact-selector fallback used when broad HID metadata enumeration times out. It must remain narrowly bound by the validated profile and use the same isolation and timeout boundary; never turn it into broad probing.
+- Preserve the per-process five-minute refresh throttle for each standard Bluetooth Battery Service path and the cross-process mutex that prevents concurrent forced device refreshes. Intermediate polls use the Windows cache.
+- Keep the last attempt time separate from the last successful sample time. A failed or stale read must not advance the success timestamp, create a new low-battery alert, or be treated as recovery. Preserve the `README.md` presentation contract that battery severity, value freshness and current availability are independent dimensions.
+- Do not label a failure as sleeping, busy or vendor-software ownership unless the protocol or platform result explicitly establishes that state. Otherwise report only the observed fact, such as no recent response or inability to access the device.
+
+## Source build baseline
+
+Source builds require:
+
+- Visual Studio 2022 Build Tools with the **Desktop development with .NET** workload;
+- .NET Framework 4.8 Runtime or Developer Pack; and
+- PowerShell 7 (`pwsh`).
+
+Do not install a missing prerequisite without first explaining its source and impact and obtaining approval. Build from the repository root with:
+
+```powershell
+pwsh -NoProfile -File .\build.ps1
+```
+
+Use the following only when an unoptimized build with debug symbols is actually required:
+
+```powershell
+pwsh -NoProfile -File .\build.ps1 -Configuration Debug
+```
+
+The build must create `PeripheralBatteryDashboard.Runtime.dll` before the GUI and Diagnostics executables, and both executables must reference that shared runtime assembly. This preserves one `IBatteryProvider` type identity across the host executables and external plugins. External plugins must reference the Runtime DLL and never either EXE.
 
 ## Validation
 
