@@ -7,6 +7,7 @@ artifacts/
 artifacts-*/
 tray-smoke-*/
 backups/
+releases/
 
 # Local probes and generated binaries
 _compile_probe.*
@@ -31,7 +32,3 @@ bin/
 *.diagnostics.txt
 settings.json
 devices.user.json
-
-# Curated portable ZIPs in releases/ are intentionally tracked.
-!releases/*.zip
-!releases/SHA256SUMS.txt

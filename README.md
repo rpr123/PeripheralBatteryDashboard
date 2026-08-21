@@ -12,7 +12,7 @@ Windows에서 동글 또는 Bluetooth로 연결한 주변기기의 배터리 상
 
 1. 설치할 Windows PC에서 로컬 셸과 파일을 사용할 수 있는 Codex 또는 코딩 에이전트를 엽니다. 저장소와 ZIP을 사용자가 먼저 받을 필요는 없습니다.
 2. 아래 프롬프트 **전체**를 그대로 전달합니다. 사용하는 제품과 실제 연결 방식을 한 줄에 하나씩 모두 적을 수 있으며, 기기마다 프롬프트를 따로 보낼 필요가 없습니다. 목록을 비워도 에이전트가 설치 후 읽기 전용 HID 및 표준 Bluetooth 서비스 인벤토리로 연결된 후보를 찾습니다.
-3. 에이전트가 공식 저장소 확보, 배포본 다운로드 또는 소스 빌드, 안정된 설치 위치 배치, 자체 테스트와 읽기 전용 인벤토리, 표준 Bluetooth의 범용 프로필 등록 또는 나머지 미지원 기기의 공개 자료 조사와 호환성 구현을 순서대로 수행하게 합니다.
+3. 에이전트가 공식 GitHub Release 확인·다운로드, 안정된 설치 위치 배치, 자체 테스트와 읽기 전용 인벤토리, 표준 Bluetooth의 범용 프로필 등록 또는 나머지 미지원 기기의 공개 자료 조사와 호환성 구현을 순서대로 수행하게 합니다. 소스 수정이나 빌드가 필요한 경우에만 같은 Release 태그의 소스를 사용합니다.
 4. 에이전트가 다운로드·설치·레지스트리/자동 실행 변경·첫 GUI 실행 또는 실제 장치 요청 전에 설명하는 대상과 영향을 확인하고 승인 여부를 결정합니다.
 
 ```text
@@ -20,7 +20,7 @@ Windows에서 동글 또는 Bluetooth로 연결한 주변기기의 배터리 상
 
 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
-저장소를 확보한 뒤 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 끝까지 읽고 현재 체크아웃의 문서를 이 작업의 권위 있는 명세로 삼아라. 공개 배포본의 활성 기본 기기 프로필은 0개다. 목록이 비어 있어도 문서의 승인된 읽기 전용 인벤토리와 최소 질문 절차로 후보를 식별하고, 한 기기의 실패 때문에 나머지를 생략하지 마라.
+설치에는 공식 v1.1.3 GitHub Release의 ZIP과 SHA256SUMS.txt를 사용하고, 압축본에 포함된 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 끝까지 읽어 이 작업의 권위 있는 명세로 삼아라. 소스 수정이나 빌드가 필요한 경우에만 공식 저장소에서 같은 v1.1.3 태그의 소스를 체크아웃하라. 기본 브랜치·Actions artifact·저장소 트리의 ZIP을 선택한 Release와 섞지 마라. 공개 배포본의 활성 기본 기기 프로필은 0개다. 목록이 비어 있어도 문서의 승인된 읽기 전용 인벤토리와 최소 질문 절차로 후보를 식별하고, 한 기기의 실패 때문에 나머지를 생략하지 마라.
 
 설치에서 끝내지 마라. 기존 프로토콜이 없거나 사용자가 자료를 주지 않았다는 이유로 즉시 중단하지 말고, 외부로 보낼 비식별화 정보와 조사 범위를 설명해 승인받은 뒤 문서에 정한 공개 근거 조사를 직접 수행하라. 근거가 충분한 경우에만 기존 공급자를 재사용하거나 새 공급자·검증 데이터·사용자 프로필을 구현하고, 조사 후에도 안전한 읽기 전용 근거가 부족하면 해당 기기만 `지원 보류(blocked)`로 남겨 확인한 내용과 이유를 보고하라.
 
@@ -72,18 +72,19 @@ Windows에서 동글 또는 Bluetooth로 연결한 주변기기의 배터리 상
 
 ## 에이전트용 배포 정보
 
-아래 파일은 GitHub Release 자산이 아니라 현재 저장소 버전에 함께 커밋된 에이전트용 배포 패키지입니다. 에이전트는 README를 읽은 것과 동일한 Git ref에서 ZIP과 SHA-256 목록을 가져와야 합니다. 사용자가 직접 내려받아 압축을 풀고 실행하는 설치 흐름은 이 프로젝트의 지원 대상이 아닙니다.
+공식 배포 패키지는 이 저장소의 **GitHub Release 자산**으로만 제공합니다. 저장소 트리에 ZIP을 함께 커밋하거나 제3자 미러·GitHub Actions artifact를 공식 배포본으로 사용하지 않습니다. 사용자가 직접 내려받아 압축을 풀고 실행하는 설치 흐름은 이 프로젝트의 지원 대상이 아닙니다.
 
-- Windows x64 패키지: [PeripheralBatteryDashboard-v1.1.3-win-x64.zip](releases/PeripheralBatteryDashboard-v1.1.3-win-x64.zip)
-- SHA-256 목록: [releases/SHA256SUMS.txt](releases/SHA256SUMS.txt)
+- 공식 Release: [Peripheral Battery Dashboard v1.1.3](https://github.com/rpr123/PeripheralBatteryDashboard/releases/tag/v1.1.3)
+- Windows x64 패키지: [PeripheralBatteryDashboard-v1.1.3-win-x64.zip](https://github.com/rpr123/PeripheralBatteryDashboard/releases/download/v1.1.3/PeripheralBatteryDashboard-v1.1.3-win-x64.zip)
+- SHA-256 목록: [SHA256SUMS.txt](https://github.com/rpr123/PeripheralBatteryDashboard/releases/download/v1.1.3/SHA256SUMS.txt)
 
-에이전트는 동일한 Git ref에서 두 파일을 가져온 뒤 다음 명령으로 해시를 계산하고 `SHA256SUMS.txt`의 `PeripheralBatteryDashboard-v1.1.3-win-x64.zip` 항목과 비교해야 합니다. 같은 파일명의 중복 항목이 있거나 값이 다르면 압축 해제나 실행을 중단하고 사용자에게 보고합니다.
+에이전트는 공식 저장소의 같은 `v1.1.3` Release에서 ZIP과 `SHA256SUMS.txt`를 함께 받은 뒤, 압축 해제나 실행 전에 아래 명령으로 해시를 계산하여 `PeripheralBatteryDashboard-v1.1.3-win-x64.zip` 항목과 비교해야 합니다. Release가 draft 또는 prerelease이거나, 태그·저장소·자산 이름이 다르거나, 같은 파일명의 항목이 중복되거나, 해시가 일치하지 않으면 실행을 중단하고 사용자에게 보고합니다. Release를 사용할 수 없으면 임의의 이전 배포본이나 저장소 트리의 ZIP을 대신 쓰지 말고, 공식 `v1.1.3` 태그의 소스를 검토·빌드할지 사용자에게 별도로 승인받습니다.
 
 ```powershell
 Get-FileHash .\PeripheralBatteryDashboard-v1.1.3-win-x64.zip -Algorithm SHA256
 ```
 
-현재 배포 바이너리는 Authenticode 코드 서명이 되어 있지 않습니다. 따라서 Windows SmartScreen 또는 백신이 **알 수 없는 게시자** 경고를 표시할 수 있습니다. 에이전트는 경고를 자동으로 우회해서는 안 되며, 공식 출처와 SHA-256 확인 결과를 사용자에게 보여 주고 실행 여부를 별도로 승인받아야 합니다. 필요하면 에이전트가 저장소 소스를 검토하고 아래 빌드 참고에 따라 직접 생성할 수 있습니다.
+현재 배포 바이너리는 Authenticode 코드 서명이 되어 있지 않습니다. 따라서 Windows SmartScreen 또는 백신이 **알 수 없는 게시자** 경고를 표시할 수 있습니다. 에이전트는 경고를 자동으로 우회해서는 안 되며, 공식 출처와 SHA-256 확인 결과를 사용자에게 보여 주고 실행 여부를 별도로 승인받아야 합니다. 소스 수정이나 빌드가 필요하면 같은 `v1.1.3` 태그의 소스를 검토하고 아래 빌드 참고에 따라 격리된 출력으로 직접 생성할 수 있습니다.
 
 요구 환경은 **Windows 10/11 x64와 .NET Framework 4.8**입니다. 새 설치의 활성 장치 프로필은 0개입니다. 따라서 설치 에이전트가 사용자 PC에서 장치를 조사·등록하기 전 빈 대시보드가 보이는 것이 정상입니다.
 
