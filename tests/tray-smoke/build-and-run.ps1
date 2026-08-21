@@ -41,6 +41,7 @@ $references = @(
     $runtime,
     'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Drawing.dll',
     'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Windows.Forms.dll',
+    'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Xaml.dll',
     'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF\WindowsBase.dll',
     'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF\PresentationCore.dll',
     'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF\PresentationFramework.dll'
