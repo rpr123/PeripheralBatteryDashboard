@@ -38,6 +38,7 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 AppSettings.TrayIconModePerDevice, "invalid tray mode fallback");
             Check(failures, AppSettings.NormalizeTrayIconMode(null) ==
                 AppSettings.TrayIconModePerDevice, "missing tray mode fallback");
+            CheckPresentationSemantics(failures);
             CheckTrayIconPureHelpers(failures);
 
             byte[] aula = new byte[32];
@@ -481,10 +482,11 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 "monitor watchdog reports a non-cooperative provider once");
             Check(failures, fastContinued,
                 "monitor keeps polling other devices after one provider hangs");
-            Check(failures, staleSnapshot != null && staleSnapshot.Percent == 66 &&
-                    staleSnapshot.IsStale &&
+            Check(failures, staleSnapshot != null && !staleSnapshot.Percent.HasValue &&
+                    !staleSnapshot.IsStale &&
+                    !staleSnapshot.LastSuccessfulAtUtc.HasValue &&
                     staleSnapshot.Connection == DeviceConnectionState.Error,
-                "monitor preserves a provider-supplied stale cache percentage");
+                "monitor hides an unverified provider cache without a prior success");
             Check(failures, hung.CallCount == 1 && hung.MaxActive == 1,
                 "monitor keeps at most one raw attempt for a hung device");
             Check(failures, secondHung.CallCount == 1 && secondHung.MaxActive == 1,
@@ -1370,6 +1372,288 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 "inventory redacts additional address and embedded path forms");
         }
 
+        private static void CheckPresentationSemantics(List<string> failures)
+        {
+            DateTime now = new DateTime(2026, 8, 21, 12, 0, 0,
+                DateTimeKind.Utc);
+            DateTime successAt = now.AddHours(-1);
+            DeviceProfile profile = new DeviceProfile
+            {
+                Id = "presentation.fixture",
+                DisplayName = "Presentation fixture",
+                DisplayOrder = 1,
+                LowBatteryPercent = 20
+            };
+
+            BatteryReading fresh70 = PresentationReading(profile,
+                DeviceConnectionState.Connected, 70, false,
+                DevicePresenceState.Present);
+            LastSuccessfulValueSnapshot snapshot =
+                DeviceMonitorService.ApplyReadingHistory(null, fresh70,
+                    DevicePresenceState.Present, successAt);
+            BatteryReading timeout70 = BatteryReading.Unavailable(profile,
+                DeviceConnectionState.Error, "조회 시간 초과", "fixture timeout",
+                "provider-watchdog-timeout");
+            snapshot = DeviceMonitorService.ApplyReadingHistory(snapshot, timeout70,
+                DevicePresenceState.Present, now);
+            DevicePresentationState stale70 = DevicePresentationResolver.Resolve(
+                profile, timeout70, now);
+            Check(failures, timeout70.Percent == 70 && timeout70.IsStale &&
+                    timeout70.LastSuccessfulAtUtc == successAt &&
+                    timeout70.LastAttemptAtUtc == now &&
+                    stale70.Freshness == BatteryValueFreshness.RecentStale &&
+                    stale70.Severity == BatterySeverity.Normal &&
+                    stale70.DisplayPercent == 70 && stale70.HasWarning,
+                "70 percent timeout preserves the original success as neutral stale");
+
+            DateTime repeatedAttempt = now.AddMinutes(5);
+            BatteryReading repeatedTimeout = BatteryReading.Unavailable(profile,
+                DeviceConnectionState.Sleeping, "최근 응답 없음", "fixture repeat",
+                "timeout");
+            snapshot = DeviceMonitorService.ApplyReadingHistory(snapshot,
+                repeatedTimeout, DevicePresenceState.Present, repeatedAttempt);
+            Check(failures, repeatedTimeout.LastSuccessfulAtUtc == successAt &&
+                    repeatedTimeout.LastAttemptAtUtc == repeatedAttempt &&
+                    repeatedTimeout.Percent == 70 && repeatedTimeout.IsStale,
+                "repeated failures do not refresh the last-success timestamp");
+
+            BatteryReading fresh8 = PresentationReading(profile,
+                DeviceConnectionState.Connected, 8, false,
+                DevicePresenceState.Present);
+            LastSuccessfulValueSnapshot criticalSnapshot =
+                DeviceMonitorService.ApplyReadingHistory(null, fresh8,
+                    DevicePresenceState.Present, successAt);
+            BatteryReading timeout8 = BatteryReading.Unavailable(profile,
+                DeviceConnectionState.Error, "조회 시간 초과", "fixture timeout",
+                "provider-watchdog-timeout");
+            DeviceMonitorService.ApplyReadingHistory(criticalSnapshot, timeout8,
+                DevicePresenceState.Present, now);
+            DevicePresentationState stale8 = DevicePresentationResolver.Resolve(
+                profile, timeout8, now);
+            Check(failures, stale8.DisplayPercent == 8 &&
+                    stale8.Freshness == BatteryValueFreshness.RecentStale &&
+                    stale8.Severity == BatterySeverity.Critical &&
+                    !stale8.CanNotifyLowBattery,
+                "8 percent timeout keeps danger severity and stale independently");
+
+            BatteryReading unverifiedCache = PresentationReading(profile,
+                DeviceConnectionState.Error, 66, true,
+                DevicePresenceState.Present);
+            LastSuccessfulValueSnapshot missingSnapshot =
+                DeviceMonitorService.ApplyReadingHistory(null, unverifiedCache,
+                    DevicePresenceState.Present, now);
+            DevicePresentationState noHistory = DevicePresentationResolver.Resolve(
+                profile, unverifiedCache, now);
+            Check(failures, missingSnapshot == null &&
+                    !unverifiedCache.Percent.HasValue && !unverifiedCache.IsStale &&
+                    !noHistory.HasDisplayValue &&
+                    !noHistory.LastKnownPercent.HasValue &&
+                    noHistory.Severity == BatterySeverity.Unknown &&
+                    noHistory.Freshness == BatteryValueFreshness.None,
+                "timeout without a successful history never looks like a last value");
+
+            List<DevicePresentationState> staleVariants =
+                new List<DevicePresentationState>();
+            foreach (DeviceConnectionState connection in new[]
+            {
+                DeviceConnectionState.Sleeping,
+                DeviceConnectionState.Busy,
+                DeviceConnectionState.Error
+            })
+            {
+                BatteryReading failure = BatteryReading.Unavailable(profile,
+                    connection, "fixture", "fixture", "fixture");
+                DeviceMonitorService.ApplyReadingHistory(snapshot, failure,
+                    DevicePresenceState.Present, now);
+                DevicePresentationState state = DevicePresentationResolver.Resolve(
+                    profile, failure, now);
+                staleVariants.Add(state);
+                Check(failures, state.DisplayPercent == 70 &&
+                        state.Freshness == BatteryValueFreshness.RecentStale &&
+                        state.HasWarning && !state.CanNotifyLowBattery,
+                    "stale " + connection + " uses the shared presentation rule");
+            }
+
+            List<DevicePresentationState> staleOnly =
+                new List<DevicePresentationState>(staleVariants) { stale8 };
+            DevicePresentationState staleRepresentative =
+                DevicePresentationResolver.SelectCombined(staleOnly);
+            Check(failures, ReferenceEquals(staleRepresentative, stale8),
+                "combined presentation uses the most urgent recent stale value");
+
+            BatteryReading fresh90Reading = PresentationReading(profile,
+                DeviceConnectionState.Connected, 90, false,
+                DevicePresenceState.Present);
+            fresh90Reading.LastAttemptAtUtc = now;
+            fresh90Reading.LastSuccessfulAtUtc = now;
+            DevicePresentationState fresh90 = DevicePresentationResolver.Resolve(
+                profile, fresh90Reading, now);
+            DevicePresentationState freshRepresentative =
+                DevicePresentationResolver.SelectCombined(
+                    new[] { stale8, fresh90 });
+            Check(failures, ReferenceEquals(freshRepresentative, fresh90),
+                "combined presentation prefers any fresh value over stale values");
+
+            BatteryReading boundaryReading = PresentationReading(profile,
+                DeviceConnectionState.Error, 8, true,
+                DevicePresenceState.Present);
+            boundaryReading.LastAttemptAtUtc = now;
+            boundaryReading.LastSuccessfulAtUtc = now.Subtract(
+                DevicePresentationResolver.MaximumStaleAge);
+            DevicePresentationState exactlyBoundary =
+                DevicePresentationResolver.Resolve(profile, boundaryReading, now);
+            boundaryReading.LastSuccessfulAtUtc = boundaryReading
+                .LastSuccessfulAtUtc.Value.AddTicks(-1);
+            DevicePresentationState expired = DevicePresentationResolver.Resolve(
+                profile, boundaryReading, now);
+            Check(failures,
+                exactlyBoundary.Freshness == BatteryValueFreshness.RecentStale &&
+                exactlyBoundary.DisplayPercent == 8 &&
+                expired.Freshness == BatteryValueFreshness.ExpiredStale &&
+                !expired.HasDisplayValue && !expired.DisplayPercent.HasValue &&
+                expired.Severity == BatterySeverity.Critical &&
+                expired.LastKnownPercent == 8 &&
+                expired.FreshnessText.Contains("24시간 초과"),
+                "24 hour cutoff hides only the primary stale value");
+
+            BatteryReading expired70Reading = PresentationReading(profile,
+                DeviceConnectionState.Error, 70, true,
+                DevicePresenceState.Present);
+            expired70Reading.LastAttemptAtUtc = now;
+            expired70Reading.LastSuccessfulAtUtc = now.AddHours(-25);
+            DevicePresentationState expired70 = DevicePresentationResolver.Resolve(
+                profile, expired70Reading, now);
+            Check(failures, ReferenceEquals(
+                    DevicePresentationResolver.SelectExpired(new[] { expired70, expired }),
+                    expired),
+                "expired representative preserves the most urgent last-known value");
+
+            DevicePresentationState fresh8State = DevicePresentationResolver.Resolve(
+                profile, fresh8, successAt);
+            Check(failures,
+                DevicePresentationResolver.EvaluateLowBatteryAlert(stale8, false) ==
+                    LowBatteryAlertAction.None &&
+                DevicePresentationResolver.EvaluateLowBatteryAlert(fresh8State, false) ==
+                    LowBatteryAlertAction.Notify &&
+                DevicePresentationResolver.EvaluateLowBatteryAlert(stale70, true) ==
+                    LowBatteryAlertAction.None,
+                "stale values neither notify nor recover the low-battery latch");
+
+            BatteryReading absentStaleReading = PresentationReading(profile,
+                DeviceConnectionState.Error, 70, true,
+                DevicePresenceState.Absent);
+            absentStaleReading.LastSuccessfulAtUtc = successAt;
+            DevicePresentationState absentStale = DevicePresentationResolver.Resolve(
+                profile, absentStaleReading, now);
+            Check(failures,
+                DevicePresentationResolver.EvaluateLowBatteryAlert(absentStale, true) ==
+                    LowBatteryAlertAction.None,
+                "absent stale state does not clear the low-battery latch");
+
+            BatteryReading recoveredReading = PresentationReading(profile,
+                DeviceConnectionState.Connected, 26, false,
+                DevicePresenceState.Present);
+            recoveredReading.LastAttemptAtUtc = now;
+            recoveredReading.LastSuccessfulAtUtc = now;
+            DevicePresentationState recovered = DevicePresentationResolver.Resolve(
+                profile, recoveredReading, now);
+            Check(failures,
+                DevicePresentationResolver.EvaluateLowBatteryAlert(recovered, true) ==
+                    LowBatteryAlertAction.Clear,
+                "only a fresh hysteresis recovery clears the low-battery latch");
+
+            profile.LowBatteryPercent = 20;
+            DevicePresentationState percent25 = DevicePresentationResolver.Resolve(
+                profile, PresentationReading(profile,
+                    DeviceConnectionState.Connected, 25, false,
+                    DevicePresenceState.Present), now);
+            profile.LowBatteryPercent = 30;
+            DevicePresentationState percent26 = DevicePresentationResolver.Resolve(
+                profile, PresentationReading(profile,
+                    DeviceConnectionState.Connected, 26, false,
+                    DevicePresenceState.Present), now);
+            BatteryReading bandOnlyReading = PresentationReading(profile,
+                DeviceConnectionState.Connected, null, false,
+                DevicePresenceState.Present);
+            bandOnlyReading.Band = BatteryLevelBand.Low;
+            DevicePresentationState bandOnly = DevicePresentationResolver.Resolve(
+                profile, bandOnlyReading, now);
+            Check(failures, percent25.Severity == BatterySeverity.Normal &&
+                    percent25.DisplayBand == BatteryLevelBand.Medium &&
+                    percent26.Severity == BatterySeverity.Low &&
+                    percent26.DisplayBand == BatteryLevelBand.Low &&
+                    bandOnly.Severity == BatterySeverity.Low,
+                "profile threshold wins over fixed bands and bands remain fallback");
+
+            profile.LowBatteryPercent = 99;
+            DevicePresentationState fullAtExtremeThreshold =
+                DevicePresentationResolver.Resolve(profile,
+                    PresentationReading(profile, DeviceConnectionState.Connected,
+                        100, false, DevicePresenceState.Present), now);
+            Check(failures, DevicePresentationResolver.EvaluateLowBatteryAlert(
+                    fullAtExtremeThreshold, true) == LowBatteryAlertAction.Clear,
+                "a valid 100 percent value clears an extreme threshold latch");
+
+            profile.LowBatteryPercent = 1;
+            DevicePresentationState criticalAtLowThreshold =
+                DevicePresentationResolver.Resolve(profile,
+                    PresentationReading(profile, DeviceConnectionState.Connected,
+                        8, false, DevicePresenceState.Present), now);
+            DevicePresentationState recoveredFromCritical =
+                DevicePresentationResolver.Resolve(profile,
+                    PresentationReading(profile, DeviceConnectionState.Connected,
+                        16, false, DevicePresenceState.Present), now);
+            Check(failures,
+                criticalAtLowThreshold.Severity == BatterySeverity.Critical &&
+                DevicePresentationResolver.EvaluateLowBatteryAlert(
+                    criticalAtLowThreshold, true) == LowBatteryAlertAction.None &&
+                DevicePresentationResolver.EvaluateLowBatteryAlert(
+                    recoveredFromCritical, true) == LowBatteryAlertAction.Clear,
+                "critical floor and recovery hysteresis remain consistent");
+
+            BatteryReading wireReading = timeout8;
+            string requestId = "presentation-wire-fixture";
+            string wire = ProviderWorkerProtocol.SerializeResponse(requestId,
+                wireReading);
+            BatteryReading wireRoundTrip;
+            Check(failures, ProviderWorkerProtocol.TryDeserializeResponse(wire,
+                    requestId, out wireRoundTrip) && wireRoundTrip.IsStale &&
+                    wireRoundTrip.LastAttemptAtUtc == now &&
+                    wireRoundTrip.LastSuccessfulAtUtc == successAt,
+                "worker response preserves freshness timestamps additively");
+
+            DiagnosticsService diagnostics = new DiagnosticsService(
+                new List<DeviceProfile>(), new ProviderRegistry(),
+                new BatteryReadContext(new HidDeviceEnumerator()));
+            string snapshotJson = diagnostics.ToJson(new[] { timeout8 });
+            Check(failures, snapshotJson.Contains("\"sampledAtUtc\"") &&
+                    snapshotJson.Contains("\"lastAttemptAtUtc\"") &&
+                    snapshotJson.Contains("\"lastSuccessfulAtUtc\"") &&
+                    snapshotJson.Contains("\"stale\":true"),
+                "diagnostic JSON keeps legacy time and adds freshness metadata");
+        }
+
+        private static BatteryReading PresentationReading(DeviceProfile profile,
+            DeviceConnectionState connection, int? percent, bool stale,
+            DevicePresenceState presence)
+        {
+            return new BatteryReading
+            {
+                ProfileId = profile.Id,
+                DisplayName = profile.DisplayName,
+                Category = profile.Category,
+                Connection = connection,
+                Charge = DeviceChargeState.Discharging,
+                Percent = percent,
+                Band = BatteryReading.BandFromPercent(percent),
+                IsStale = stale,
+                Presence = presence,
+                StatusText = connection == DeviceConnectionState.Connected
+                    ? "연결됨"
+                    : "최근 응답 없음"
+            };
+        }
+
         private static void CheckTrayIconPureHelpers(List<string> failures)
         {
             try
@@ -1452,13 +1736,13 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 object unknownVisual = createVisual.Invoke(null, new object[] { profile, unknownReading });
                 string unknownKey = VisualProperty(unknownVisual, "RenderKey");
                 Check(failures, VisualProperty(unknownVisual, "Text") == "?" &&
-                    unknownKey.StartsWith("unknown|", StringComparison.Ordinal),
+                    unknownKey.StartsWith("resolved|None|", StringComparison.Ordinal),
                     "tray unknown visual");
 
                 BatteryReading connectedUnknownReading = TestReading(DeviceConnectionState.Connected, null);
                 object connectedUnknownVisual = createVisual.Invoke(null,
                     new object[] { profile, connectedUnknownReading });
-                Check(failures, VisualProperty(connectedUnknownVisual, "Text") == "?" &&
+                Check(failures, VisualProperty(connectedUnknownVisual, "Text") == "—" &&
                     VisualColorArgb(connectedUnknownVisual) ==
                         System.Drawing.Color.FromArgb(255, 120, 137, 160).ToArgb(),
                     "tray connected unknown uses neutral color");
@@ -1475,6 +1759,7 @@ namespace PeripheralBatteryDashboard.Diagnostics
 
                 BatteryReading errorWithLastValue = TestReading(DeviceConnectionState.Error, 73);
                 errorWithLastValue.IsStale = true;
+                errorWithLastValue.LastSuccessfulAtUtc = DateTime.UtcNow.AddMinutes(-5);
                 errorWithLastValue.StatusText = "조회 오류";
                 object errorVisual = createVisual.Invoke(null,
                     new object[] { profile, errorWithLastValue });
@@ -1482,35 +1767,59 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 string errorToolTip = Convert.ToString(buildDeviceToolTip.Invoke(null,
                     new object[] { profile, errorWithLastValue }));
                 Check(failures, VisualProperty(errorVisual, "Text") == "73" &&
-                    errorKey.StartsWith("error|73|stale:True", StringComparison.Ordinal) &&
-                    VisualColorArgb(errorVisual) ==
-                        System.Drawing.Color.FromArgb(255, 255, 154, 169).ToArgb() &&
+                    errorKey.StartsWith("resolved|RecentStale|Normal|Attention|73|badge:True",
+                        StringComparison.Ordinal) &&
                     VisualBackgroundArgb(errorVisual) ==
-                        System.Drawing.Color.FromArgb(255, 157, 37, 60).ToArgb() &&
-                    errorToolTip.Contains("조회 오류 · 마지막 73%"),
-                    "tray error keeps last percent on red background");
+                        System.Drawing.Color.FromArgb(255, 17, 27, 46).ToArgb() &&
+                    VisualProperty(errorVisual, "AttentionBadge") == "True" &&
+                    errorToolTip.Contains("최근 응답 없음") &&
+                    errorToolTip.Contains("마지막 확인") &&
+                    errorToolTip.Contains("73%"),
+                    "tray stale error keeps value on a neutral background with warning badge");
 
                 object normalSamePercent = createVisual.Invoke(null,
                     new object[] { profile, TestReading(DeviceConnectionState.Connected, 73) });
                 Check(failures, errorKey != VisualProperty(normalSamePercent, "RenderKey"),
                     "tray normal and error visuals use different render keys");
+                Check(failures,
+                    VisualValueColorArgb(errorVisual) == VisualColorArgb(errorVisual) &&
+                    VisualValueColorArgb(errorVisual) !=
+                        VisualValueColorArgb(normalSamePercent),
+                    "tray stale number uses the dimmed battery severity color");
+
+                BatteryReading staleCriticalReading = TestReading(
+                    DeviceConnectionState.Error, 8);
+                staleCriticalReading.IsStale = true;
+                staleCriticalReading.LastSuccessfulAtUtc = DateTime.UtcNow.AddMinutes(-5);
+                object staleCriticalVisual = createVisual.Invoke(null,
+                    new object[] { profile, staleCriticalReading });
+                object freshCriticalVisual = createVisual.Invoke(null,
+                    new object[] { profile,
+                        TestReading(DeviceConnectionState.Connected, 8) });
+                Check(failures,
+                    VisualValueColorArgb(staleCriticalVisual) ==
+                        VisualColorArgb(staleCriticalVisual) &&
+                    VisualValueColorArgb(staleCriticalVisual) !=
+                        VisualValueColorArgb(freshCriticalVisual),
+                    "tray stale critical number keeps danger hue at lower intensity");
 
                 BatteryReading errorWithoutValue = TestReading(DeviceConnectionState.Error, null);
                 object errorWithoutValueVisual = createVisual.Invoke(null,
                     new object[] { profile, errorWithoutValue });
                 Check(failures, VisualProperty(errorWithoutValueVisual, "Text") == "—" &&
                     VisualBackgroundArgb(errorWithoutValueVisual) ==
-                        System.Drawing.Color.FromArgb(255, 157, 37, 60).ToArgb() &&
+                        System.Drawing.Color.FromArgb(255, 17, 27, 46).ToArgb() &&
+                    VisualProperty(errorWithoutValueVisual, "AttentionBadge") == "True" &&
                     errorKey != VisualProperty(errorWithoutValueVisual, "RenderKey"),
-                    "tray error without last percent uses red dash");
+                    "tray error without last percent uses neutral dash and warning badge");
 
                 object combinedErrorVisual = createCombinedVisual.Invoke(null,
                     new object[] { errorVisual });
                 Check(failures, VisualProperty(combinedErrorVisual, "Text") == "73" &&
                     VisualProperty(combinedErrorVisual, "DeviceShape") == "combined" &&
                     VisualBackgroundArgb(combinedErrorVisual) ==
-                        System.Drawing.Color.FromArgb(255, 157, 37, 60).ToArgb(),
-                    "combined tray preserves red stale-error visual");
+                        System.Drawing.Color.FromArgb(255, 17, 27, 46).ToArgb(),
+                    "combined tray keeps a neutral stale-error background");
 
                 object combinedErrorWithoutValueVisual = createCombinedVisual.Invoke(null,
                     new object[] { errorWithoutValueVisual });
@@ -1518,14 +1827,14 @@ namespace PeripheralBatteryDashboard.Diagnostics
                     VisualProperty(combinedErrorWithoutValueVisual, "Text") == "—" &&
                     VisualProperty(combinedErrorWithoutValueVisual, "DeviceShape") == "combined" &&
                     VisualBackgroundArgb(combinedErrorWithoutValueVisual) ==
-                        System.Drawing.Color.FromArgb(255, 157, 37, 60).ToArgb(),
-                    "combined tray preserves red error visual without cached value");
+                        System.Drawing.Color.FromArgb(255, 17, 27, 46).ToArgb(),
+                    "combined tray keeps a neutral no-value error background");
 
                 BatteryReading offlineReading = TestReading(DeviceConnectionState.Disconnected, 73);
                 object offlineVisual = createVisual.Invoke(null, new object[] { profile, offlineReading });
                 string offlineKey = VisualProperty(offlineVisual, "RenderKey");
                 Check(failures, VisualProperty(offlineVisual, "Text") == "—" &&
-                    offlineKey.StartsWith("offline|", StringComparison.Ordinal) &&
+                    offlineKey.StartsWith("resolved|None|", StringComparison.Ordinal) &&
                     offlineKey != unknownKey &&
                     VisualBackgroundArgb(offlineVisual) ==
                         System.Drawing.Color.FromArgb(255, 17, 27, 46).ToArgb(),
@@ -1568,7 +1877,8 @@ namespace PeripheralBatteryDashboard.Diagnostics
 
         private static BatteryReading TestReading(DeviceConnectionState connection, int? percent)
         {
-            return new BatteryReading
+            DateTime now = DateTime.UtcNow;
+            BatteryReading reading = new BatteryReading
             {
                 ProfileId = "self-test.device",
                 DisplayName = "Self-test device",
@@ -1576,8 +1886,14 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 Charge = DeviceChargeState.Discharging,
                 Percent = percent,
                 Band = BatteryReading.BandFromPercent(percent),
+                Presence = DevicePresenceState.Present,
+                LastAttemptAtUtc = now,
                 StatusText = connection == DeviceConnectionState.Connected ? "연결됨" : "연결 안 됨"
             };
+            if (connection == DeviceConnectionState.Connected &&
+                (percent.HasValue || reading.Band != BatteryLevelBand.Unknown))
+                reading.LastSuccessfulAtUtc = now;
+            return reading;
         }
 
         private static string VisualProperty(object visual, string propertyName)
@@ -1608,6 +1924,20 @@ namespace PeripheralBatteryDashboard.Diagnostics
             if (visual == null)
                 return 0;
             PropertyInfo property = visual.GetType().GetProperty("Background",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (property == null)
+                return 0;
+            object value = property.GetValue(visual, null);
+            return value is System.Drawing.Color
+                ? ((System.Drawing.Color)value).ToArgb()
+                : 0;
+        }
+
+        private static int VisualValueColorArgb(object visual)
+        {
+            if (visual == null)
+                return 0;
+            PropertyInfo property = visual.GetType().GetProperty("ValueColor",
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (property == null)
                 return 0;

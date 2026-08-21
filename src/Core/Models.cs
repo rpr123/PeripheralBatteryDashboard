@@ -184,6 +184,8 @@ namespace PeripheralBatteryDashboard.Core
         public string StatusText { get; set; }
         public string DetailText { get; set; }
         public DateTime SampledAtUtc { get; set; }
+        public DateTime? LastAttemptAtUtc { get; set; }
+        public DateTime? LastSuccessfulAtUtc { get; set; }
         public bool IsStale { get; set; }
         public string ErrorCode { get; set; }
         [System.Web.Script.Serialization.ScriptIgnore]

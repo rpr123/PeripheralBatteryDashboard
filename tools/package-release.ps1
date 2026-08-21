@@ -2,7 +2,7 @@
 param(
     [string]$InputDirectory = 'dist',
     [string]$OutputDirectory = 'artifacts',
-    [string]$Version = '1.1.2'
+    [string]$Version = '1.1.3'
 )
 
 Set-StrictMode -Version Latest

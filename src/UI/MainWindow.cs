@@ -10,6 +10,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using PeripheralBatteryDashboard.Core;
 using PeripheralBatteryDashboard.Diagnostics;
@@ -26,6 +27,7 @@ namespace PeripheralBatteryDashboard.UI
         private readonly DiagnosticsService _diagnostics;
         private readonly Dictionary<string, DeviceCardView> _cards;
         private readonly string _guiExecutablePath;
+        private readonly DispatcherTimer _presentationTimer;
         private TextBlock _summaryText;
         private TextBlock _lastUpdatedText;
         private TextBlock _footerText;
@@ -38,6 +40,7 @@ namespace PeripheralBatteryDashboard.UI
 
         public event EventHandler SettingsChanged;
         public event EventHandler ProfilesImported;
+        public event EventHandler PresentationChanged;
 
         public MainWindow(
             IList<DeviceProfile> profiles,
@@ -78,6 +81,13 @@ namespace PeripheralBatteryDashboard.UI
 
             Content = BuildContent();
             _monitor.ReadingUpdated += MonitorOnReadingUpdated;
+            _presentationTimer = new DispatcherTimer(DispatcherPriority.Background,
+                Dispatcher)
+            {
+                Interval = TimeSpan.FromMinutes(1)
+            };
+            _presentationTimer.Tick += PresentationTimerOnTick;
+            _presentationTimer.Start();
 
             Loaded += delegate
             {
@@ -136,16 +146,27 @@ namespace PeripheralBatteryDashboard.UI
                 return;
             }
 
+            DateTime nowUtc = DateTime.UtcNow;
             DeviceCardView card;
             if (_cards.TryGetValue(reading.ProfileId, out card))
-                card.Update(reading);
-            UpdateSummary();
+                card.Update(reading, nowUtc);
+            UpdateSummary(nowUtc);
         }
 
         protected override void OnClosed(EventArgs e)
         {
             _monitor.ReadingUpdated -= MonitorOnReadingUpdated;
+            _presentationTimer.Stop();
+            _presentationTimer.Tick -= PresentationTimerOnTick;
             base.OnClosed(e);
+        }
+
+        private void PresentationTimerOnTick(object sender, EventArgs e)
+        {
+            ApplySnapshot();
+            EventHandler handler = PresentationChanged;
+            if (handler != null)
+                handler(this, EventArgs.Empty);
         }
 
         private UIElement BuildContent()
@@ -688,47 +709,81 @@ namespace PeripheralBatteryDashboard.UI
 
         private void ApplySnapshot()
         {
+            DateTime nowUtc = DateTime.UtcNow;
             foreach (BatteryReading reading in _monitor.Snapshot)
             {
                 DeviceCardView card;
                 if (_cards.TryGetValue(reading.ProfileId, out card))
-                    card.Update(reading);
+                    card.Update(reading, nowUtc);
             }
-            UpdateSummary();
+            UpdateSummary(nowUtc);
         }
 
-        private void UpdateSummary()
+        private void UpdateSummary(DateTime nowUtc)
         {
             IList<BatteryReading> readings = _monitor.Snapshot;
-            IList<BatteryReading> presentReadings = readings.Where(r => r.IsPresent).ToList();
-            int connected = presentReadings.Count(r => r.Connection == DeviceConnectionState.Connected);
-            int low = presentReadings.Count(r => r.Connection == DeviceConnectionState.Connected &&
-                (r.Band == BatteryLevelBand.Critical || r.Band == BatteryLevelBand.Low));
-            int stale = presentReadings.Count(r => r.IsStale);
-            int pending = readings.Count(r => r.Presence == DevicePresenceState.Unknown);
+            Dictionary<string, BatteryReading> readingsById = readings
+                .Where(r => r != null && !string.IsNullOrWhiteSpace(r.ProfileId))
+                .GroupBy(r => r.ProfileId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Last(),
+                    StringComparer.OrdinalIgnoreCase);
+            List<DevicePresentationState> states = new List<DevicePresentationState>();
+            foreach (DeviceProfile profile in _profiles)
+            {
+                BatteryReading reading;
+                readingsById.TryGetValue(profile.Id, out reading);
+                states.Add(DevicePresentationResolver.Resolve(profile, reading, nowUtc));
+            }
+
+            IList<DevicePresentationState> presentStates = states
+                .Where(state => state.IsPresent).ToList();
+            int connected = presentStates.Count(state =>
+                state.Availability == DeviceAvailability.Available);
+            int freshLow = presentStates.Count(state =>
+                state.Freshness == BatteryValueFreshness.Fresh &&
+                IsLowSeverity(state.Severity));
+            int recentStale = presentStates.Count(state =>
+                state.Freshness == BatteryValueFreshness.RecentStale);
+            int staleLow = presentStates.Count(state =>
+                state.Freshness == BatteryValueFreshness.RecentStale &&
+                IsLowSeverity(state.Severity));
+            int expired = presentStates.Count(state =>
+                state.Freshness == BatteryValueFreshness.ExpiredStale);
+            int attention = presentStates.Count(state => state.HasWarning);
+            int pending = states.Count(state => state.IsPending);
             string summary;
             if (_profiles.Count == 0)
                 summary = "등록된 장치 프로필 없음";
-            else if (presentReadings.Count == 0 && pending > 0)
+            else if (presentStates.Count == 0 && pending > 0)
                 summary = "장치 상태를 확인하고 있습니다.";
-            else if (presentReadings.Count == 0)
+            else if (presentStates.Count == 0)
                 summary = "현재 감지된 지원 장치 없음";
             else
             {
-                summary = "연결 " + connected + " / " + presentReadings.Count;
-                if (low > 0)
-                    summary += "   ·   배터리 부족 " + low;
-                if (stale > 0)
-                    summary += "   ·   이전 값 " + stale;
+                summary = "연결 " + connected + " / " + presentStates.Count;
+                if (freshLow > 0)
+                    summary += "   ·   배터리 부족 " + freshLow;
+                if (recentStale > 0)
+                {
+                    summary += "   ·   이전 값 " + recentStale;
+                    if (staleLow > 0)
+                        summary += " (부족 " + staleLow + ")";
+                }
+                if (expired > 0)
+                    summary += "   ·   만료된 이전 값 " + expired;
+                if (attention > 0)
+                    summary += "   ·   상태 확인 " + attention;
             }
             _summaryText.Text = summary;
-            _summaryText.Foreground = low > 0 ? UiFactory.Warning : UiFactory.PrimaryText;
+            _summaryText.Foreground = freshLow > 0 || staleLow > 0 || attention > 0
+                ? UiFactory.Warning
+                : UiFactory.PrimaryText;
 
             if (_cardsPanel != null)
-                _cardsPanel.Columns = presentReadings.Count <= 1 ? 1 : 2;
+                _cardsPanel.Columns = presentStates.Count <= 1 ? 1 : 2;
             if (_emptyStateHost != null)
             {
-                _emptyStateHost.Visibility = presentReadings.Count == 0
+                _emptyStateHost.Visibility = presentStates.Count == 0
                     ? Visibility.Visible
                     : Visibility.Collapsed;
                 if (_profiles.Count == 0)
@@ -739,12 +794,27 @@ namespace PeripheralBatteryDashboard.UI
                     _emptyStateText.Text = "이 PC에서 현재 감지된 등록 장치가 없습니다.";
             }
 
-            BatteryReading latest = presentReadings.OrderByDescending(r => r.SampledAtUtc)
-                .FirstOrDefault() ?? readings.Where(r => r.Presence != DevicePresenceState.Unknown)
-                .OrderByDescending(r => r.SampledAtUtc).FirstOrDefault();
-            _lastUpdatedText.Text = latest == null
-                ? "마지막 업데이트 —"
-                : "마지막 업데이트 " + latest.SampledAtUtc.ToLocalTime().ToString("HH:mm:ss");
+            DateTime? latestAttempt = presentStates
+                .Where(state => state.LastAttemptAtUtc.HasValue)
+                .Select(state => state.LastAttemptAtUtc)
+                .OrderByDescending(value => value.Value)
+                .FirstOrDefault();
+            if (!latestAttempt.HasValue)
+            {
+                latestAttempt = states.Where(state => state.LastAttemptAtUtc.HasValue)
+                    .Select(state => state.LastAttemptAtUtc)
+                    .OrderByDescending(value => value.Value)
+                    .FirstOrDefault();
+            }
+            _lastUpdatedText.Text = !latestAttempt.HasValue
+                ? "마지막 조회 —"
+                : "마지막 조회 " + latestAttempt.Value.ToLocalTime().ToString("HH:mm:ss");
+        }
+
+        private static bool IsLowSeverity(BatterySeverity severity)
+        {
+            return severity == BatterySeverity.Low ||
+                severity == BatterySeverity.Critical;
         }
 
         private void SetFooter(string message)
@@ -870,46 +940,101 @@ namespace PeripheralBatteryDashboard.UI
                 Root.Visibility = Visibility.Collapsed;
             }
 
-            internal void Update(BatteryReading reading)
+            internal void Update(BatteryReading reading, DateTime nowUtc)
             {
-                Root.Visibility = reading.IsPresent
+                DevicePresentationState state = DevicePresentationResolver.Resolve(
+                    _profile, reading, nowUtc);
+                Root.Visibility = state.IsPresent
                     ? Visibility.Visible
                     : Visibility.Collapsed;
-                Brush color = StatusColor(reading);
-                _stateDot.Fill = color;
-                _statusText.Text = reading.StatusText;
-                _statusText.Foreground = color;
+                Brush availabilityColor = AvailabilityColor(state.Availability);
+                Brush batteryColor = BatterySeverityColor(state.Severity);
+                _stateDot.Fill = availabilityColor;
+                _statusText.Text = state.AvailabilityText;
+                _statusText.Foreground = availabilityColor;
 
-                if (reading.Percent.HasValue)
+                if (state.HasDisplayValue && state.DisplayPercent.HasValue)
                 {
-                    _valueText.Text = (reading.IsApproximate ? "약 " : "") + reading.Percent.Value + "%";
-                    _levelText.Text = "배터리 · " + BandLabel(reading.Band);
-                    _barRatio = Math.Max(0, Math.Min(1, reading.Percent.Value / 100.0));
+                    _valueText.Text = (reading.IsApproximate ? "약 " : "") +
+                        state.DisplayPercent.Value + "%";
+                    _levelText.Text = "배터리 · " + BandLabel(state.DisplayBand) +
+                        (state.Freshness == BatteryValueFreshness.RecentStale
+                            ? " · 이전 값"
+                            : string.Empty);
+                    _barRatio = state.BarRatio;
                 }
-                else if (reading.Connection == DeviceConnectionState.Connected && reading.Band != BatteryLevelBand.Unknown)
+                else if (state.HasDisplayValue &&
+                    state.DisplayBand != BatteryLevelBand.Unknown)
                 {
-                    _valueText.Text = BandLabel(reading.Band);
+                    _valueText.Text = BandLabel(state.DisplayBand);
                     _levelText.Text = reading.IsApproximate ? "단계 정보" : "배터리 상태";
-                    _barRatio = BandRatio(reading.Band);
+                    if (state.Freshness == BatteryValueFreshness.RecentStale)
+                        _levelText.Text += " · 이전 값";
+                    _barRatio = state.BarRatio;
                 }
                 else
                 {
                     _valueText.Text = "—";
-                    _levelText.Text = ConnectionLabel(reading.Connection);
+                    _levelText.Text = state.Freshness == BatteryValueFreshness.ExpiredStale
+                        ? "배터리 · 이전 값 만료"
+                        : state.AvailabilityText;
                     _barRatio = 0;
                 }
 
-                _valueText.Foreground = color;
-                _barFill.Background = color;
-                _barFill.Opacity = reading.IsStale ? 0.55 : 1.0;
+                bool recentStale = state.Freshness ==
+                    BatteryValueFreshness.RecentStale;
+                _valueText.Foreground = state.HasDisplayValue
+                    ? batteryColor
+                    : state.Freshness == BatteryValueFreshness.ExpiredStale
+                        ? UiFactory.PrimaryText
+                        : UiFactory.Offline;
+                _barFill.Background = state.HasDisplayValue
+                    ? batteryColor
+                    : UiFactory.Offline;
+                _valueText.Opacity = recentStale ? 0.55 : 1.0;
+                _levelText.Opacity = recentStale ? 0.65 : 1.0;
+                _barFill.Opacity = recentStale ? 0.55 : 1.0;
                 ResizeBar();
 
-                _chargeText.Text = ChargeLabel(reading.Charge);
-                _chargeText.Foreground = reading.Charge == DeviceChargeState.Charging ? UiFactory.Accent : UiFactory.SecondaryText;
-                _detailText.Text = string.IsNullOrWhiteSpace(reading.DetailText) ? reading.StatusText : reading.DetailText;
-                _sampleText.Text = (reading.IsStale ? "이전 값 · " : "업데이트 · ") + reading.SampledAtUtc.ToLocalTime().ToString("HH:mm:ss");
-                _sampleText.Foreground = reading.IsStale ? UiFactory.Warning : UiFactory.MutedText;
-                Root.ToolTip = _profile.DisplayName + "\n" + reading.StatusText + "\n" + reading.DetailText;
+                bool fresh = state.Freshness == BatteryValueFreshness.Fresh;
+                _chargeText.Text = fresh ? ChargeLabel(reading.Charge) : string.Empty;
+                _chargeText.Foreground = fresh &&
+                    reading.Charge == DeviceChargeState.Charging
+                    ? UiFactory.Accent
+                    : UiFactory.SecondaryText;
+
+                string detail = string.IsNullOrWhiteSpace(reading.DetailText)
+                    ? state.AvailabilityText
+                    : reading.DetailText;
+                if (state.Freshness == BatteryValueFreshness.ExpiredStale)
+                {
+                    string successfulAt = state.LastSuccessfulAtUtc.HasValue
+                        ? state.LastSuccessfulAtUtc.Value.ToLocalTime()
+                            .ToString("yyyy-MM-dd HH:mm:ss")
+                        : "시각 알 수 없음";
+                    detail = AppendDetail(detail, "마지막 값 " +
+                        LastKnownValueText(state) + " · 성공 시각 " + successfulAt);
+                }
+                _detailText.Text = detail;
+                if (state.Freshness == BatteryValueFreshness.RecentStale ||
+                    state.Freshness == BatteryValueFreshness.ExpiredStale)
+                {
+                    _sampleText.Text = state.FreshnessText;
+                }
+                else if (state.LastAttemptAtUtc.HasValue)
+                {
+                    _sampleText.Text = "업데이트 · " +
+                        state.LastAttemptAtUtc.Value.ToLocalTime().ToString("HH:mm:ss");
+                }
+                else
+                {
+                    _sampleText.Text = "업데이트 대기 중";
+                }
+                _sampleText.Foreground = recentStale
+                    ? UiFactory.Warning
+                    : UiFactory.MutedText;
+                Root.ToolTip = _profile.DisplayName + "\n" +
+                    state.AvailabilityText + "\n" + detail;
             }
 
             private void ResizeBar()
@@ -917,22 +1042,25 @@ namespace PeripheralBatteryDashboard.UI
                 _barFill.Width = Math.Max(0, _barHost.ActualWidth * _barRatio);
             }
 
-            private static Brush StatusColor(BatteryReading reading)
+            private static Brush AvailabilityColor(DeviceAvailability availability)
             {
-                if (reading.Connection == DeviceConnectionState.Error)
-                    return UiFactory.Danger;
-                if (reading.Connection != DeviceConnectionState.Connected)
-                    return UiFactory.Offline;
-                if (reading.Charge == DeviceChargeState.Charging)
-                    return UiFactory.Accent;
-                switch (reading.Band)
+                switch (availability)
                 {
-                    case BatteryLevelBand.Critical: return UiFactory.Danger;
-                    case BatteryLevelBand.Low: return UiFactory.Warning;
-                    case BatteryLevelBand.Medium: return UiFactory.Warning;
-                    case BatteryLevelBand.High:
-                    case BatteryLevelBand.Full: return UiFactory.Success;
-                    default: return UiFactory.Accent;
+                    case DeviceAvailability.Available: return UiFactory.Success;
+                    case DeviceAvailability.Attention:
+                    case DeviceAvailability.Inaccessible: return UiFactory.Warning;
+                    default: return UiFactory.Offline;
+                }
+            }
+
+            private static Brush BatterySeverityColor(BatterySeverity severity)
+            {
+                switch (severity)
+                {
+                    case BatterySeverity.Critical: return UiFactory.Danger;
+                    case BatterySeverity.Low: return UiFactory.Warning;
+                    case BatterySeverity.Normal: return UiFactory.Success;
+                    default: return UiFactory.Offline;
                 }
             }
 
@@ -949,31 +1077,24 @@ namespace PeripheralBatteryDashboard.UI
                 }
             }
 
-            private static double BandRatio(BatteryLevelBand band)
+            private static string LastKnownValueText(DevicePresentationState state)
             {
-                switch (band)
-                {
-                    case BatteryLevelBand.Critical: return 0.06;
-                    case BatteryLevelBand.Low: return 0.25;
-                    case BatteryLevelBand.Medium: return 0.55;
-                    case BatteryLevelBand.High: return 0.85;
-                    case BatteryLevelBand.Full: return 1.0;
-                    default: return 0;
-                }
+                if (state != null && state.LastKnownPercent.HasValue)
+                    return state.LastKnownPercent.Value + "%";
+                if (state != null && state.LastKnownBand != BatteryLevelBand.Unknown)
+                    return BandLabel(state.LastKnownBand);
+                return "잔량 알 수 없음";
             }
 
-            private static string ConnectionLabel(DeviceConnectionState state)
+            private static string AppendDetail(string detail, string suffix)
             {
-                switch (state)
-                {
-                    case DeviceConnectionState.Connected: return "연결됨";
-                    case DeviceConnectionState.Sleeping: return "절전 또는 전원 꺼짐";
-                    case DeviceConnectionState.Disconnected: return "연결 안 됨";
-                    case DeviceConnectionState.Busy: return "장치 사용 중";
-                    case DeviceConnectionState.Unsupported: return "지원 모듈 없음";
-                    case DeviceConnectionState.Error: return "조회 오류";
-                    default: return "확인 중";
-                }
+                if (string.IsNullOrWhiteSpace(suffix))
+                    return detail ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(detail))
+                    return suffix;
+                if (detail.IndexOf(suffix, StringComparison.Ordinal) >= 0)
+                    return detail;
+                return detail + " · " + suffix;
             }
 
             private static string ChargeLabel(DeviceChargeState state)

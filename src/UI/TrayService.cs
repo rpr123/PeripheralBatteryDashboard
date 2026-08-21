@@ -22,8 +22,10 @@ namespace PeripheralBatteryDashboard.UI
         private const string PerDeviceMode = "per-device";
         private const string CombinedMode = "combined";
         private static readonly Color DefaultIconBackground = Color.FromArgb(255, 17, 27, 46);
-        private static readonly Color ErrorIconBackground = Color.FromArgb(255, 157, 37, 60);
-        private static readonly Color ErrorIconAccent = Color.FromArgb(255, 255, 154, 169);
+        private static readonly Color NormalBatteryAccent = Color.FromArgb(255, 55, 206, 194);
+        private static readonly Color WarningAccent = Color.FromArgb(255, 245, 183, 66);
+        private static readonly Color CriticalBatteryAccent = Color.FromArgb(255, 251, 96, 119);
+        private static readonly Color NeutralAccent = Color.FromArgb(255, 120, 137, 160);
         private static readonly string[] DigitGlyphs =
         {
             "111101101101111",
@@ -99,6 +101,7 @@ namespace PeripheralBatteryDashboard.UI
             _monitor.ReadingUpdated += MonitorOnReadingUpdated;
             _window.Closing += WindowOnClosing;
             _window.SettingsChanged += WindowOnSettingsChanged;
+            _window.PresentationChanged += WindowOnPresentationChanged;
         }
 
         public void ShowWindow()
@@ -151,6 +154,17 @@ namespace PeripheralBatteryDashboard.UI
         private void WindowOnSettingsChanged(object sender, EventArgs e)
         {
             RunOnUiThread(ApplyTrayMode);
+        }
+
+        private void WindowOnPresentationChanged(object sender, EventArgs e)
+        {
+            RunOnUiThread(delegate
+            {
+                if (string.Equals(_activeMode, PerDeviceMode, StringComparison.Ordinal))
+                    UpdateAllDeviceSlots();
+                else
+                    UpdateCombinedSlot();
+            });
         }
 
         private void ApplyTrayMode()
@@ -262,37 +276,25 @@ namespace PeripheralBatteryDashboard.UI
             bool notifyLow = false;
             bool critical = false;
             DeviceProfile profile;
+            DevicePresentationState state;
+            DateTime nowUtc = DateTime.UtcNow;
 
             lock (_stateLock)
             {
                 _readings[reading.ProfileId] = reading;
                 _profiles.TryGetValue(reading.ProfileId, out profile);
-
-                bool isUsableReading = reading.IsPresent &&
-                    reading.Connection == DeviceConnectionState.Connected && !reading.IsStale;
-                int threshold = profile == null ? 20 : Math.Max(1, Math.Min(99, profile.LowBatteryPercent));
-                bool isLow = isUsableReading && reading.Charge != DeviceChargeState.Charging &&
-                    ((reading.Percent.HasValue && reading.Percent.Value <= threshold) ||
-                     (!reading.Percent.HasValue &&
-                      (reading.Band == BatteryLevelBand.Low || reading.Band == BatteryLevelBand.Critical)));
-
-                bool recovered = isUsableReading &&
-                    ((reading.Percent.HasValue && reading.Percent.Value > threshold + 5) ||
-                     (!reading.Percent.HasValue &&
-                      (reading.Band == BatteryLevelBand.Medium || reading.Band == BatteryLevelBand.High ||
-                       reading.Band == BatteryLevelBand.Full)));
-
-                if (!reading.IsPresent)
+                state = DevicePresentationResolver.Resolve(profile, reading, nowUtc);
+                bool alreadyLatched = _lowBatteryNotifications.Contains(reading.ProfileId);
+                LowBatteryAlertAction action = DevicePresentationResolver
+                    .EvaluateLowBatteryAlert(state, alreadyLatched);
+                if (action == LowBatteryAlertAction.Clear)
                     _lowBatteryNotifications.Remove(reading.ProfileId);
-                else if (recovered)
-                    _lowBatteryNotifications.Remove(reading.ProfileId);
-                else if (isLow && _settings.NotificationsEnabled &&
-                         !_lowBatteryNotifications.Contains(reading.ProfileId))
+                else if (action == LowBatteryAlertAction.Notify &&
+                    _settings.NotificationsEnabled)
                 {
                     _lowBatteryNotifications.Add(reading.ProfileId);
                     notifyLow = true;
-                    critical = reading.Band == BatteryLevelBand.Critical ||
-                               (reading.Percent.HasValue && reading.Percent.Value <= 10);
+                    critical = state.Severity == BatterySeverity.Critical;
                 }
             }
 
@@ -308,9 +310,11 @@ namespace PeripheralBatteryDashboard.UI
 
                 if (notifyLow)
                 {
-                    string value = reading.Percent.HasValue
-                        ? reading.Percent.Value + "%"
-                        : reading.StatusText;
+                    string value = state.DisplayPercent.HasValue
+                        ? state.DisplayPercent.Value + "%"
+                        : state.DisplayBand != BatteryLevelBand.Unknown
+                            ? BandLabel(state.DisplayBand)
+                            : state.AvailabilityText;
                     ShowBalloon(critical ? "배터리 교체가 필요합니다" : "배터리가 부족합니다",
                         reading.DisplayName + " · " + value,
                         Forms.ToolTipIcon.Warning,
@@ -322,8 +326,13 @@ namespace PeripheralBatteryDashboard.UI
 
         private void UpdateAllDeviceSlots()
         {
+            DateTime nowUtc = DateTime.UtcNow;
             foreach (DeviceProfile profile in _orderedProfiles)
-                UpdateDeviceSlot(profile.Id);
+            {
+                TrayIconSlot slot;
+                if (_deviceSlots.TryGetValue(profile.Id, out slot))
+                    UpdateDeviceSlot(slot, profile, GetReading(profile.Id), nowUtc);
+            }
             UpdatePerDeviceFallbackVisibility();
         }
 
@@ -335,15 +344,24 @@ namespace PeripheralBatteryDashboard.UI
                 !_profiles.TryGetValue(profileId, out profile))
                 return;
 
-            UpdateDeviceSlot(slot, profile, GetReading(profileId));
+            UpdateDeviceSlot(slot, profile, GetReading(profileId), DateTime.UtcNow);
         }
 
         private void UpdateDeviceSlot(TrayIconSlot slot, DeviceProfile profile, BatteryReading reading)
         {
-            TrayVisual visual = CreateDeviceVisual(profile, reading);
+            UpdateDeviceSlot(slot, profile, reading, DateTime.UtcNow);
+        }
+
+        private void UpdateDeviceSlot(TrayIconSlot slot, DeviceProfile profile,
+            BatteryReading reading, DateTime nowUtc)
+        {
+            DevicePresentationState state = DevicePresentationResolver.Resolve(
+                profile, reading, nowUtc);
+            TrayVisual visual = CreateResolvedDeviceVisual(profile, state);
             ApplyVisual(slot, visual);
-            slot.NotifyIcon.Text = TruncateToolTip(BuildDeviceToolTip(profile, reading));
-            slot.NotifyIcon.Visible = reading != null && reading.IsPresent;
+            slot.NotifyIcon.Text = TruncateToolTip(BuildResolvedDeviceToolTip(
+                profile, state, nowUtc));
+            slot.NotifyIcon.Visible = state.IsPresent;
         }
 
         private void UpdatePerDeviceFallbackVisibility()
@@ -366,49 +384,78 @@ namespace PeripheralBatteryDashboard.UI
 
         private void UpdateCombinedSlot(TrayIconSlot slot)
         {
-            DeviceProfile representativeProfile;
-            BatteryReading representative;
-            bool anyUnknown;
-            bool anyPresent;
-            SelectCombinedReading(out representativeProfile, out representative,
-                out anyUnknown, out anyPresent);
+            DateTime nowUtc = DateTime.UtcNow;
+            List<DevicePresentationState> states = new List<DevicePresentationState>();
+            bool anyUnknown = false;
+            lock (_stateLock)
+            {
+                foreach (DeviceProfile profile in _orderedProfiles)
+                {
+                    BatteryReading reading;
+                    if (!_readings.TryGetValue(profile.Id, out reading) || reading == null)
+                        anyUnknown = true;
+                    DevicePresentationState state = DevicePresentationResolver.Resolve(
+                        profile, reading, nowUtc);
+                    if (state.IsPending)
+                        anyUnknown = true;
+                    states.Add(state);
+                }
+            }
+
+            DevicePresentationState representative =
+                DevicePresentationResolver.SelectCombined(states);
+            DevicePresentationState expiredRepresentative =
+                DevicePresentationResolver.SelectExpired(states);
+            bool anyPresent = states.Any(state => state.IsPresent);
+            int attentionCount = states.Count(ShouldShowAttentionBadge);
+            int expiredCount = states.Count(state => state.IsPresent &&
+                state.Freshness == BatteryValueFreshness.ExpiredStale);
+            bool showAttentionBadge = attentionCount > 0;
 
             TrayVisual visual;
             string tooltip;
             if (representative != null)
             {
-                visual = CreateCombinedVisual(CreateDeviceVisual(representativeProfile, representative));
-                if (representative.Connection == DeviceConnectionState.Error)
-                {
-                    tooltip = representative.IsStale && representative.Percent.HasValue
-                        ? "주변기기 배터리 · 조회 오류 · 마지막 " +
-                          ClampPercent(representative.Percent.Value) + "%"
-                        : "주변기기 배터리 · 조회 오류";
-                }
+                TrayVisual source = CreateResolvedDeviceVisual(
+                    representative.Profile, representative);
+                visual = CreateCombinedVisualWithAttention(source, showAttentionBadge);
+                if (representative.Freshness == BatteryValueFreshness.Fresh)
+                    tooltip = "주변기기 배터리 · 최저 " +
+                        PresentationValue(representative);
                 else
-                {
-                    tooltip = representative.Percent.HasValue
-                        ? "주변기기 배터리 · 최저 " +
-                          ClampPercent(representative.Percent.Value) + "%"
-                        : "주변기기 배터리 · " +
-                          SafeStatus(representative.StatusText, "잔량 단계 확인됨");
-                }
+                    tooltip = "주변기기 배터리 · 마지막 " +
+                        PresentationValue(representative) + " · " +
+                        DevicePresentationResolver.FormatAge(
+                            representative.LastSuccessfulAtUtc, nowUtc);
+                if (attentionCount > 0)
+                    tooltip += " · 상태 주의 " + attentionCount;
             }
             else if (anyPresent)
             {
-                visual = CreateSimpleVisual("—", Color.FromArgb(255, 102, 116, 139), false,
-                    "combined-present-unavailable", "combined");
-                tooltip = "주변기기 배터리 · 감지됨 · 응답 대기";
+                visual = CreateCombinedVisualWithAttention(
+                    CreateSimpleVisual("—", NeutralAccent, false,
+                        "combined-present-unavailable", "combined"),
+                    showAttentionBadge);
+                if (expiredRepresentative != null)
+                    tooltip = "주변기기 배터리 · 마지막 " +
+                        LastKnownValue(expiredRepresentative) + " · 성공 " +
+                        FormatSuccessfulTime(expiredRepresentative.LastSuccessfulAtUtc);
+                else if (expiredCount > 0)
+                    tooltip = "주변기기 배터리 · 이전 값 만료 " + expiredCount;
+                else if (attentionCount > 0)
+                    tooltip = "주변기기 배터리 · 상태 확인 필요 " + attentionCount;
+                else
+                    tooltip = "주변기기 배터리 · 감지됨 · 응답 대기";
             }
             else if (anyUnknown)
             {
-                visual = CreateSimpleVisual("?", Color.FromArgb(255, 120, 137, 160), false,
+                visual = CreateSimpleVisual("?", NeutralAccent, false,
                     "combined-unknown", "combined");
                 tooltip = "주변기기 배터리 · 확인 중";
             }
             else
             {
-                visual = CreateSimpleVisual("—", Color.FromArgb(255, 102, 116, 139), false,
+                visual = CreateSimpleVisual("—", NeutralAccent, false,
                     "combined-offline", "combined");
                 tooltip = "주변기기 배터리 · 연결된 장치 없음";
             }
@@ -417,152 +464,46 @@ namespace PeripheralBatteryDashboard.UI
             slot.NotifyIcon.Text = TruncateToolTip(tooltip);
         }
 
-        private void SelectCombinedReading(out DeviceProfile representativeProfile,
-            out BatteryReading representative, out bool anyUnknown, out bool anyPresent)
-        {
-            representativeProfile = null;
-            representative = null;
-            anyUnknown = false;
-            anyPresent = false;
-            DeviceProfile errorFallbackProfile = null;
-            BatteryReading errorFallback = null;
-
-            lock (_stateLock)
-            {
-                foreach (DeviceProfile profile in _orderedProfiles)
-                {
-                    BatteryReading candidate;
-                    if (!_readings.TryGetValue(profile.Id, out candidate) || candidate == null)
-                    {
-                        anyUnknown = true;
-                        continue;
-                    }
-
-                    if (candidate.Connection == DeviceConnectionState.Unknown)
-                        anyUnknown = true;
-                    if (!candidate.IsPresent)
-                        continue;
-                    anyPresent = true;
-                    if (candidate.Connection == DeviceConnectionState.Error)
-                    {
-                        bool candidateHasLastValue = HasErrorLastValue(candidate);
-                        bool fallbackHasLastValue = HasErrorLastValue(errorFallback);
-                        if (errorFallback == null ||
-                            (candidateHasLastValue && !fallbackHasLastValue) ||
-                            (candidateHasLastValue == fallbackHasLastValue &&
-                             IsMoreUrgent(candidate, errorFallback)))
-                        {
-                            errorFallback = candidate;
-                            errorFallbackProfile = profile;
-                        }
-                        continue;
-                    }
-                    if (candidate.Connection != DeviceConnectionState.Connected || candidate.IsStale)
-                        continue;
-
-                    if (representative == null || IsMoreUrgent(candidate, representative))
-                    {
-                        representative = candidate;
-                        representativeProfile = profile;
-                    }
-                }
-
-                if (representative == null && errorFallback != null)
-                {
-                    representative = errorFallback;
-                    representativeProfile = errorFallbackProfile;
-                }
-            }
-        }
-
-        private static bool HasErrorLastValue(BatteryReading reading)
-        {
-            return reading != null && reading.IsStale && reading.Percent.HasValue;
-        }
-
-        private static bool IsMoreUrgent(BatteryReading candidate, BatteryReading current)
-        {
-            BatteryLevelBand candidateBand = EffectiveBand(candidate);
-            BatteryLevelBand currentBand = EffectiveBand(current);
-            int urgencyDifference = Urgency(candidateBand) - Urgency(currentBand);
-            if (urgencyDifference != 0)
-                return urgencyDifference > 0;
-
-            if (candidate.Percent.HasValue && current.Percent.HasValue)
-                return candidate.Percent.Value < current.Percent.Value;
-            return candidate.Percent.HasValue && !current.Percent.HasValue;
-        }
-
-        private static BatteryLevelBand EffectiveBand(BatteryReading reading)
-        {
-            if (reading == null)
-                return BatteryLevelBand.Unknown;
-            return reading.Band != BatteryLevelBand.Unknown
-                ? reading.Band
-                : BatteryReading.BandFromPercent(reading.Percent);
-        }
-
-        private static int Urgency(BatteryLevelBand band)
-        {
-            switch (band)
-            {
-                case BatteryLevelBand.Critical: return 5;
-                case BatteryLevelBand.Low: return 4;
-                case BatteryLevelBand.Medium: return 3;
-                case BatteryLevelBand.High: return 2;
-                case BatteryLevelBand.Full: return 1;
-                default: return 0;
-            }
-        }
-
         private static TrayVisual CreateDeviceVisual(DeviceProfile profile, BatteryReading reading)
         {
+            DevicePresentationState state = DevicePresentationResolver.Resolve(
+                profile, reading, DateTime.UtcNow);
+            return CreateResolvedDeviceVisual(profile, state);
+        }
+
+        private static TrayVisual CreateResolvedDeviceVisual(DeviceProfile profile,
+            DevicePresentationState state)
+        {
             string deviceShape = ResolveDeviceShape(profile);
-            if (reading == null || reading.Connection == DeviceConnectionState.Unknown)
-                return CreateSimpleVisual("?", Color.FromArgb(255, 120, 137, 160), false,
-                    "unknown", deviceShape);
+            if (state == null)
+                return CreateSimpleVisual("?", NeutralAccent, false,
+                    "missing-state", deviceShape);
 
-            int? percent = reading.Percent.HasValue
-                ? (int?)ClampPercent(reading.Percent.Value)
-                : null;
-            if (reading.Connection == DeviceConnectionState.Error)
+            bool attentionBadge = ShouldShowAttentionBadge(state);
+            bool charging = state.Freshness == BatteryValueFreshness.Fresh &&
+                state.Reading != null &&
+                state.Reading.Charge == DeviceChargeState.Charging;
+            string text;
+            Color accent;
+            if (state.HasDisplayValue)
             {
-                string errorText = reading.IsStale && percent.HasValue
-                    ? percent.Value.ToString()
-                    : "—";
-                return CreateSimpleVisualWithBackground(errorText, ErrorIconAccent, false,
-                    "error|" + errorText + "|stale:" + reading.IsStale,
-                    deviceShape, ErrorIconBackground);
+                text = state.DisplayPercent.HasValue
+                    ? state.DisplayPercent.Value.ToString()
+                    : "?";
+                accent = BatterySeverityColor(state.Severity);
+                if (state.Freshness == BatteryValueFreshness.RecentStale)
+                    accent = BlendWithBackground(accent, 0.58);
+            }
+            else
+            {
+                text = state.IsPending ? "?" : "—";
+                accent = AvailabilityColor(state.Availability);
             }
 
-            if (reading.Connection != DeviceConnectionState.Connected || reading.IsStale)
-            {
-                string offlineKey = "offline|" + reading.Connection + "|" + reading.IsStale;
-                return CreateSimpleVisual("—", Color.FromArgb(255, 102, 116, 139), false,
-                    offlineKey, deviceShape);
-            }
-
-            int threshold = profile == null ? 20 : Math.Max(1, Math.Min(99, profile.LowBatteryPercent));
-            BatteryLevelBand band = EffectiveBand(reading);
-            bool critical = percent.HasValue
-                ? percent.Value <= 10
-                : band == BatteryLevelBand.Critical;
-            bool low = !critical && (percent.HasValue
-                ? percent.Value <= threshold
-                : band == BatteryLevelBand.Low);
-            bool charging = reading.Charge == DeviceChargeState.Charging;
-            bool levelUnknown = !percent.HasValue && band == BatteryLevelBand.Unknown;
-            Color accent = levelUnknown
-                ? Color.FromArgb(255, 120, 137, 160)
-                : critical
-                    ? Color.FromArgb(255, 251, 96, 119)
-                    : low
-                        ? Color.FromArgb(255, 245, 183, 66)
-                        : Color.FromArgb(255, 55, 206, 194);
-            string text = percent.HasValue ? percent.Value.ToString() : "?";
-            string key = "connected|" + text + "|" + band + "|" + charging + "|" +
-                         critical + "|" + low + "|" + levelUnknown;
-            return CreateSimpleVisual(text, accent, charging, key, deviceShape);
+            string key = "resolved|" + state.Freshness + "|" + state.Severity + "|" +
+                state.Availability + "|" + text + "|badge:" + attentionBadge;
+            return CreateTrayVisual(text, accent, charging, key, deviceShape,
+                attentionBadge);
         }
 
         private static TrayVisual CreateSimpleVisual(string text, Color accent,
@@ -575,33 +516,93 @@ namespace PeripheralBatteryDashboard.UI
         private static TrayVisual CreateSimpleVisualWithBackground(string text, Color accent,
             bool charging, string renderKey, string deviceShape, Color background)
         {
+            return CreateTrayVisual(text, accent, charging, renderKey, deviceShape, false);
+        }
+
+        private static TrayVisual CreateTrayVisual(string text, Color accent,
+            bool charging, string renderKey, string deviceShape, bool attentionBadge)
+        {
             string normalizedShape = NormalizeDeviceShape(deviceShape);
             return new TrayVisual
             {
                 Text = text,
                 Accent = accent,
-                Background = background,
+                ValueColor = IsAsciiDigits(text) ? accent : NeutralAccent,
+                Background = DefaultIconBackground,
                 Charging = charging,
+                AttentionBadge = attentionBadge,
                 DeviceShape = normalizedShape,
                 RenderKey = renderKey + "|" + accent.ToArgb() + "|background:" +
-                            background.ToArgb() + "|" + charging + "|shape:" + normalizedShape
+                            DefaultIconBackground.ToArgb() + "|value:" +
+                            (IsAsciiDigits(text) ? accent : NeutralAccent).ToArgb() +
+                            "|" + charging + "|shape:" + normalizedShape +
+                            "|attention:" + attentionBadge
             };
         }
 
         private static TrayVisual CreateCombinedVisual(TrayVisual source)
         {
+            return CreateCombinedVisualWithAttention(source, false);
+        }
+
+        private static TrayVisual CreateCombinedVisualWithAttention(TrayVisual source,
+            bool attentionBadge)
+        {
             return new TrayVisual
             {
                 Text = source == null ? "?" : source.Text,
-                Accent = source == null ? Color.FromArgb(255, 120, 137, 160) : source.Accent,
-                Background = source == null ? DefaultIconBackground : source.Background,
+                Accent = source == null ? NeutralAccent : source.Accent,
+                ValueColor = source == null ? NeutralAccent : source.ValueColor,
+                Background = DefaultIconBackground,
                 Charging = source != null && source.Charging,
+                AttentionBadge = attentionBadge,
                 DeviceShape = "combined",
                 RenderKey = "combined|" + (source == null ? "?" : source.Text) + "|" +
-                            (source == null ? 0 : source.Accent.ToArgb()) + "|" +
-                            (source == null ? DefaultIconBackground.ToArgb() : source.Background.ToArgb()) + "|" +
-                            (source != null && source.Charging)
+                    (source == null ? 0 : source.Accent.ToArgb()) + "|" +
+                    DefaultIconBackground.ToArgb() + "|" +
+                    (source == null ? NeutralAccent.ToArgb() :
+                        source.ValueColor.ToArgb()) + "|" +
+                    (source != null && source.Charging) + "|attention:" + attentionBadge
             };
+        }
+
+        private static bool ShouldShowAttentionBadge(DevicePresentationState state)
+        {
+            return state != null && state.IsPresent &&
+                state.Freshness != BatteryValueFreshness.Fresh &&
+                (state.Availability == DeviceAvailability.Attention ||
+                 state.Availability == DeviceAvailability.Inaccessible);
+        }
+
+        private static Color BatterySeverityColor(BatterySeverity severity)
+        {
+            switch (severity)
+            {
+                case BatterySeverity.Critical: return CriticalBatteryAccent;
+                case BatterySeverity.Low: return WarningAccent;
+                case BatterySeverity.Normal: return NormalBatteryAccent;
+                default: return NeutralAccent;
+            }
+        }
+
+        private static Color AvailabilityColor(DeviceAvailability availability)
+        {
+            return availability == DeviceAvailability.Attention ||
+                   availability == DeviceAvailability.Inaccessible
+                ? WarningAccent
+                : NeutralAccent;
+        }
+
+        private static Color BlendWithBackground(Color foreground, double opacity)
+        {
+            double normalized = Math.Max(0.0, Math.Min(1.0, opacity));
+            return Color.FromArgb(255,
+                (int)Math.Round(DefaultIconBackground.R +
+                    (foreground.R - DefaultIconBackground.R) * normalized),
+                (int)Math.Round(DefaultIconBackground.G +
+                    (foreground.G - DefaultIconBackground.G) * normalized),
+                (int)Math.Round(DefaultIconBackground.B +
+                    (foreground.B - DefaultIconBackground.B) * normalized));
         }
 
         private static string ResolveDeviceShape(DeviceProfile profile)
@@ -642,40 +643,96 @@ namespace PeripheralBatteryDashboard.UI
 
         private static string BuildDeviceToolTip(DeviceProfile profile, BatteryReading reading)
         {
+            DevicePresentationState state = DevicePresentationResolver.Resolve(
+                profile, reading, DateTime.UtcNow);
+            return BuildResolvedDeviceToolTip(profile, state, DateTime.UtcNow);
+        }
+
+        private static string BuildResolvedDeviceToolTip(DeviceProfile profile,
+            DevicePresentationState state, DateTime nowUtc)
+        {
             string name = profile == null || string.IsNullOrWhiteSpace(profile.DisplayName)
                 ? "주변기기"
                 : profile.DisplayName.Trim();
-            if (reading == null || reading.Connection == DeviceConnectionState.Unknown)
+            if (state == null || state.IsPending)
                 return ComposeToolTip(name, "확인 중");
 
-            if (reading.Connection != DeviceConnectionState.Connected || reading.IsStale)
+            if (state.Freshness == BatteryValueFreshness.RecentStale)
             {
-                string state;
-                switch (reading.Connection)
-                {
-                    case DeviceConnectionState.Sleeping: state = "절전 또는 연결 안 됨"; break;
-                    case DeviceConnectionState.Busy: state = "장치 사용 중"; break;
-                    case DeviceConnectionState.Unsupported: state = "지원되지 않음"; break;
-                    case DeviceConnectionState.Error: state = "조회 오류"; break;
-                    default: state = "연결 안 됨"; break;
-                }
-                if (reading.IsStale && reading.Percent.HasValue)
-                    state += " · 마지막 " + ClampPercent(reading.Percent.Value) + "%";
-                return ComposeToolTip(name, state);
+                string suffix = state.AvailabilityText + " · " + state.FreshnessText +
+                    " · " + PresentationValue(state);
+                return ComposeToolTip(name, suffix);
             }
 
-            string value;
-            if (reading.Percent.HasValue)
-                value = (reading.IsApproximate ? "약 " : string.Empty) +
-                        ClampPercent(reading.Percent.Value) + "%";
-            else
-                value = SafeStatus(reading.StatusText, "잔량 정보 없음");
+            if (state.Freshness == BatteryValueFreshness.ExpiredStale)
+            {
+                string suffix = state.AvailabilityText + " · 마지막 값 만료 · " +
+                    LastKnownValue(state) + " · 성공 " +
+                    FormatSuccessfulTime(state.LastSuccessfulAtUtc);
+                return ComposeToolTip(name, suffix);
+            }
 
-            if (reading.Charge == DeviceChargeState.Charging)
+            if (state.Freshness != BatteryValueFreshness.Fresh)
+            {
+                string suffix = state.AvailabilityText;
+                if (state.Availability == DeviceAvailability.Available)
+                    suffix += " · 잔량 정보 없음";
+                return ComposeToolTip(name, suffix);
+            }
+
+            string value = PresentationValue(state);
+            BatteryReading reading = state.Reading;
+            if (reading != null && reading.Charge == DeviceChargeState.Charging)
                 return ComposeToolTip(name, "충전 중 · " + value);
-            if (reading.Charge == DeviceChargeState.Full)
+            if (reading != null && reading.Charge == DeviceChargeState.Full)
                 return ComposeToolTip(name, "완충 · " + value);
             return ComposeToolTip(name, value);
+        }
+
+        private static string PresentationValue(DevicePresentationState state)
+        {
+            if (state == null)
+                return "잔량 정보 없음";
+            if (state.DisplayPercent.HasValue)
+            {
+                bool approximate = state.Reading != null && state.Reading.IsApproximate;
+                return (approximate ? "약 " : string.Empty) +
+                    state.DisplayPercent.Value + "%";
+            }
+            return state.DisplayBand != BatteryLevelBand.Unknown
+                ? BandLabel(state.DisplayBand)
+                : "잔량 정보 없음";
+        }
+
+        private static string LastKnownValue(DevicePresentationState state)
+        {
+            if (state == null)
+                return "값 없음";
+            if (state.LastKnownPercent.HasValue)
+                return state.LastKnownPercent.Value + "%";
+            return state.LastKnownBand != BatteryLevelBand.Unknown
+                ? BandLabel(state.LastKnownBand)
+                : "값 없음";
+        }
+
+        private static string FormatSuccessfulTime(DateTime? successfulAtUtc)
+        {
+            return successfulAtUtc.HasValue
+                ? successfulAtUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                : "시각 알 수 없음";
+        }
+
+        private static string BandLabel(BatteryLevelBand band)
+        {
+            switch (band)
+            {
+                case BatteryLevelBand.Critical: return "교체 필요";
+                case BatteryLevelBand.Low: return "부족";
+                case BatteryLevelBand.Medium: return "보통";
+                case BatteryLevelBand.High: return "충분";
+                case BatteryLevelBand.Full: return "가득 참";
+                default: return "잔량 정보 없음";
+            }
         }
 
         private static string ComposeToolTip(string name, string suffix)
@@ -748,8 +805,9 @@ namespace PeripheralBatteryDashboard.UI
                 string.Equals(slot.RenderKey, visual.RenderKey, StringComparison.Ordinal))
                 return;
 
-            Icon replacement = CreateStatusIconWithBackground(visual.Text, visual.Accent,
-                visual.Charging, visual.DeviceShape, visual.Background);
+            Icon replacement = CreateStatusIconWithPresentation(visual.Text,
+                visual.Accent, visual.ValueColor, visual.Charging,
+                visual.DeviceShape, visual.AttentionBadge);
             try
             {
                 slot.NotifyIcon.Icon = replacement;
@@ -814,6 +872,21 @@ namespace PeripheralBatteryDashboard.UI
         private static Icon CreateStatusIconWithBackground(string text, Color accent,
             bool charging, string deviceShape, Color backgroundColor)
         {
+            return CreateStatusIconWithAttention(text, accent, charging, deviceShape, false);
+        }
+
+        private static Icon CreateStatusIconWithAttention(string text, Color accent,
+            bool charging, string deviceShape, bool attentionBadge)
+        {
+            Color valueColor = IsAsciiDigits(text) ? accent : NeutralAccent;
+            return CreateStatusIconWithPresentation(text, accent, valueColor,
+                charging, deviceShape, attentionBadge);
+        }
+
+        private static Icon CreateStatusIconWithPresentation(string text, Color accent,
+            Color valueColor, bool charging, string deviceShape, bool attentionBadge)
+        {
+            Color backgroundColor = DefaultIconBackground;
             using (Bitmap bitmap = new Bitmap(32, 32,
                 System.Drawing.Imaging.PixelFormat.Format32bppArgb))
             using (Graphics graphics = Graphics.FromImage(bitmap))
@@ -825,7 +898,7 @@ namespace PeripheralBatteryDashboard.UI
                 string normalizedShape = NormalizeDeviceShape(deviceShape);
                 DrawDeviceSilhouette(graphics, normalizedShape, backgroundColor, accent);
 
-                using (SolidBrush foreground = new SolidBrush(Color.FromArgb(255, 238, 244, 255)))
+                using (SolidBrush foreground = new SolidBrush(valueColor))
                 using (SolidBrush textShadow = new SolidBrush(Color.FromArgb(235, 4, 10, 20)))
                 {
                     string glyphText = string.IsNullOrEmpty(text) ? "?" : text;
@@ -866,6 +939,9 @@ namespace PeripheralBatteryDashboard.UI
                         graphics.DrawPolygon(chargeOutline, bolt);
                 }
 
+                if (attentionBadge)
+                    DrawAttentionBadge(graphics, backgroundColor);
+
                 IntPtr handle = bitmap.GetHicon();
                 try
                 {
@@ -875,6 +951,23 @@ namespace PeripheralBatteryDashboard.UI
                 {
                     DestroyIcon(handle);
                 }
+            }
+        }
+
+        private static void DrawAttentionBadge(Graphics graphics, Color backgroundColor)
+        {
+            RectangleF badgeBounds = new RectangleF(22.5f, 0.5f, 9.0f, 9.0f);
+            using (SolidBrush badge = new SolidBrush(WarningAccent))
+            using (Pen outline = new Pen(backgroundColor, 1.2f))
+            using (Pen mark = new Pen(Color.FromArgb(255, 52, 39, 14), 1.4f))
+            using (SolidBrush markDot = new SolidBrush(Color.FromArgb(255, 52, 39, 14)))
+            {
+                graphics.FillEllipse(badge, badgeBounds);
+                graphics.DrawEllipse(outline, badgeBounds);
+                mark.StartCap = LineCap.Round;
+                mark.EndCap = LineCap.Round;
+                graphics.DrawLine(mark, 27, 2.6f, 27, 5.7f);
+                graphics.FillEllipse(markDot, 26.25f, 7.0f, 1.5f, 1.5f);
             }
         }
 
@@ -1217,6 +1310,7 @@ namespace PeripheralBatteryDashboard.UI
             _monitor.ReadingUpdated -= MonitorOnReadingUpdated;
             _window.Closing -= WindowOnClosing;
             _window.SettingsChanged -= WindowOnSettingsChanged;
+            _window.PresentationChanged -= WindowOnPresentationChanged;
 
             DisposeCombinedSlot();
             DisposeSlots(_deviceSlots);
@@ -1266,8 +1360,10 @@ namespace PeripheralBatteryDashboard.UI
         {
             public string Text { get; set; }
             public Color Accent { get; set; }
+            public Color ValueColor { get; set; }
             public Color Background { get; set; }
             public bool Charging { get; set; }
+            public bool AttentionBadge { get; set; }
             public string DeviceShape { get; set; }
             public string RenderKey { get; set; }
         }

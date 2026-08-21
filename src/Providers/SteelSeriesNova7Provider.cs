@@ -51,7 +51,9 @@ namespace PeripheralBatteryDashboard.Providers
                 }
 
                 return BatteryReading.Unavailable(profile, DeviceConnectionState.Sleeping,
-                    "상태 응답 없음", "헤드셋이 절전 중일 수 있습니다.", "unexpected-response");
+                    "최근 응답 없음",
+                    "배터리 상태 응답을 확인하지 못했습니다. 헤드셋이 절전 상태일 가능성도 있습니다.",
+                    "unexpected-response");
             }
             catch (OperationCanceledException)
             {

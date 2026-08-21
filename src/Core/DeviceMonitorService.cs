@@ -38,6 +38,7 @@ namespace PeripheralBatteryDashboard.Core
     {
         public DeviceProfile Profile;
         public BatteryReading LastReading;
+        public LastSuccessfulValueSnapshot LastSuccessfulValue;
         public DevicePresenceState Presence;
         public DateTime NextPollUtc;
         public DateTime AttemptStartedUtc;
@@ -51,6 +52,25 @@ namespace PeripheralBatteryDashboard.Core
         public bool RefreshPending;
         public CancellationTokenSource AttemptCancellation;
         public List<string> ActiveIoKeys = new List<string>();
+    }
+
+    internal sealed class LastSuccessfulValueSnapshot
+    {
+        public int? Percent { get; }
+        public BatteryLevelBand Band { get; }
+        public bool IsApproximate { get; }
+        public DeviceChargeState Charge { get; }
+        public DateTime SuccessfulAtUtc { get; }
+
+        public LastSuccessfulValueSnapshot(int? percent, BatteryLevelBand band,
+            bool isApproximate, DeviceChargeState charge, DateTime successfulAtUtc)
+        {
+            Percent = percent;
+            Band = band;
+            IsApproximate = isApproximate;
+            Charge = charge;
+            SuccessfulAtUtc = successfulAtUtc;
+        }
     }
 
     internal sealed class ReadingSubscriberRuntime
@@ -415,7 +435,9 @@ namespace PeripheralBatteryDashboard.Core
                             "현재 장치 없음",
                             "이 PC에서 정확히 일치하는 HID 컬렉션이 감지되지 않았습니다.",
                             "hardware-not-present");
-                        absent.Presence = DevicePresenceState.Absent;
+                        runtime.LastSuccessfulValue = ApplyReadingHistory(
+                            runtime.LastSuccessfulValue, absent,
+                            DevicePresenceState.Absent, now);
                         runtime.LastReading = absent;
                         EnqueueReadingUpdated(absent);
                     }
@@ -455,7 +477,7 @@ namespace PeripheralBatteryDashboard.Core
                         "조회 시간 초과",
                         "장치 또는 Windows 드라이버 응답이 지연되고 있습니다. 다른 장치 조회는 계속됩니다.",
                         "provider-watchdog-timeout");
-                    EnqueueReadingUpdated(StoreReadingLocked(runtime, timeout));
+                    EnqueueReadingUpdated(StoreReadingLocked(runtime, timeout, now));
                 }
             }
             CancelAttempts(cancellations);
@@ -655,7 +677,8 @@ namespace PeripheralBatteryDashboard.Core
                         _activeIoKeys.Remove(key);
                     runtime.ActiveIoKeys.Clear();
                     runtime.ReadInFlight = false;
-                    runtime.LastCompletedUtc = DateTime.UtcNow;
+                    DateTime completedUtc = DateTime.UtcNow;
+                    runtime.LastCompletedUtc = completedUtc;
                     cancellation = runtime.AttemptCancellation;
                     if (cancellation != null)
                         _cancellationRequests.TryGetValue(cancellation,
@@ -666,7 +689,8 @@ namespace PeripheralBatteryDashboard.Core
                     {
                         BatteryReading reading = ReadingFromCompletedTask(runtime.Profile,
                             task);
-                        EnqueueReadingUpdated(StoreReadingLocked(runtime, reading));
+                        EnqueueReadingUpdated(StoreReadingLocked(runtime, reading,
+                            completedUtc));
                     }
                     else if (task.IsFaulted)
                     {
@@ -722,7 +746,7 @@ namespace PeripheralBatteryDashboard.Core
         }
 
         private BatteryReading StoreReadingLocked(DeviceRuntime runtime,
-            BatteryReading reading)
+            BatteryReading reading, DateTime observedUtc)
         {
             DevicePresenceState presence;
             if (IsHidProfile(runtime.Profile))
@@ -740,41 +764,139 @@ namespace PeripheralBatteryDashboard.Core
                 presence = ResolveNonHidPresence(reading, runtime.Presence);
                 runtime.Presence = presence;
             }
-            reading.Presence = presence;
+            runtime.LastSuccessfulValue = ApplyReadingHistory(
+                runtime.LastSuccessfulValue, reading, presence, observedUtc);
 
-            bool success = reading.Connection == DeviceConnectionState.Connected;
-            if (success)
+            bool connected = reading.Connection == DeviceConnectionState.Connected;
+
+            if (connected)
             {
                 runtime.FailureCount = 0;
             }
             else
             {
                 runtime.FailureCount++;
-                if (!reading.Percent.HasValue &&
-                    presence == DevicePresenceState.Present &&
-                    runtime.LastReading != null &&
-                    runtime.LastReading.Percent.HasValue)
-                {
-                    reading.Percent = runtime.LastReading.Percent;
-                    reading.Band = runtime.LastReading.Band;
-                    reading.IsStale = true;
-                    string detail = reading.DetailText ?? string.Empty;
-                    reading.DetailText = detail +
-                        (detail.Length == 0 ? string.Empty : " · ") +
-                        "마지막 값 " + runtime.LastReading.Percent.Value + "%";
-                }
             }
 
             runtime.LastReading = reading;
             int normalSeconds = _settings.PollSeconds > 0
                 ? _settings.PollSeconds
                 : runtime.Profile.EffectivePollSeconds;
-            int nextSeconds = success || presence != DevicePresenceState.Present
+            int nextSeconds = connected || presence != DevicePresenceState.Present
                 ? normalSeconds
                 : Math.Min(300, normalSeconds *
                     (int)Math.Pow(2, Math.Min(runtime.FailureCount, 4)));
             runtime.NextPollUtc = DateTime.UtcNow.AddSeconds(nextSeconds);
             return reading;
+        }
+
+        internal static LastSuccessfulValueSnapshot ApplyReadingHistory(
+            LastSuccessfulValueSnapshot priorSnapshot,
+            BatteryReading reading,
+            DevicePresenceState presence,
+            DateTime observedUtc)
+        {
+            if (reading == null)
+                return priorSnapshot;
+
+            reading.Presence = presence;
+            reading.LastAttemptAtUtc = observedUtc;
+
+            bool connected = reading.Connection == DeviceConnectionState.Connected;
+            bool hasUsableValue = HasUsableBatteryValue(reading);
+            bool hasAnyValue = reading.Percent.HasValue ||
+                reading.Band != BatteryLevelBand.Unknown;
+            bool freshSuccess = presence == DevicePresenceState.Present &&
+                connected && !reading.IsStale && hasUsableValue;
+            if (freshSuccess)
+            {
+                priorSnapshot = new LastSuccessfulValueSnapshot(
+                    reading.Percent,
+                    reading.Band,
+                    reading.IsApproximate,
+                    reading.Charge,
+                    observedUtc);
+                reading.LastSuccessfulAtUtc = observedUtc;
+                reading.IsStale = false;
+            }
+            else if (presence == DevicePresenceState.Absent)
+            {
+                priorSnapshot = null;
+                ClearBatteryValue(reading);
+                reading.LastSuccessfulAtUtc = null;
+            }
+            else if (presence == DevicePresenceState.Present &&
+                CanReuseLastSuccessfulValue(reading.Connection) &&
+                priorSnapshot != null)
+            {
+                ApplyLastSuccessfulValue(reading, priorSnapshot);
+            }
+            else
+            {
+                if (reading.IsStale || hasAnyValue)
+                {
+                    ClearBatteryValue(reading);
+                    AppendDetail(reading,
+                        "확인된 앱 내 성공 값이 없어 캐시 잔량을 표시하지 않습니다.");
+                }
+                reading.LastSuccessfulAtUtc = null;
+            }
+
+            return priorSnapshot;
+        }
+
+        private static bool HasUsableBatteryValue(BatteryReading reading)
+        {
+            if (reading == null)
+                return false;
+            if (reading.Percent.HasValue)
+                return reading.Percent.Value >= 0 && reading.Percent.Value <= 100;
+            return reading.Band != BatteryLevelBand.Unknown;
+        }
+
+        private static bool CanReuseLastSuccessfulValue(
+            DeviceConnectionState connection)
+        {
+            return connection == DeviceConnectionState.Connected ||
+                connection == DeviceConnectionState.Error ||
+                connection == DeviceConnectionState.Sleeping ||
+                connection == DeviceConnectionState.Busy ||
+                connection == DeviceConnectionState.Disconnected;
+        }
+
+        private static void ApplyLastSuccessfulValue(BatteryReading reading,
+            LastSuccessfulValueSnapshot snapshot)
+        {
+            reading.Percent = snapshot.Percent;
+            reading.Band = snapshot.Band;
+            reading.IsApproximate = snapshot.IsApproximate;
+            reading.Charge = snapshot.Charge;
+            reading.IsStale = true;
+            reading.LastSuccessfulAtUtc = snapshot.SuccessfulAtUtc;
+            string detail = snapshot.Percent.HasValue
+                ? "마지막 성공 값 " + snapshot.Percent.Value + "%"
+                : "마지막 성공 잔량 단계";
+            AppendDetail(reading, detail);
+        }
+
+        private static void ClearBatteryValue(BatteryReading reading)
+        {
+            reading.Percent = null;
+            reading.Band = BatteryLevelBand.Unknown;
+            reading.IsApproximate = false;
+            reading.Charge = DeviceChargeState.Unknown;
+            reading.IsStale = false;
+        }
+
+        private static void AppendDetail(BatteryReading reading, string suffix)
+        {
+            if (reading == null || string.IsNullOrWhiteSpace(suffix))
+                return;
+            string detail = reading.DetailText ?? string.Empty;
+            if (detail.IndexOf(suffix, StringComparison.Ordinal) >= 0)
+                return;
+            reading.DetailText = detail +
+                (detail.Length == 0 ? string.Empty : " · ") + suffix;
         }
 
         private int WatchdogMilliseconds(DeviceProfile profile)

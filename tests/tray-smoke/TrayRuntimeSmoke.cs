@@ -132,13 +132,53 @@ internal static class SmokeRunner
 
             tray = new TrayService(window, monitor, settings, delegate { });
             AssertPerDeviceState(tray, profiles.Count, "initial per-device mode");
+            AssertNotificationLatchSemantics(tray, settings, profiles[2]);
 
-            PushReading(tray, CreateErrorReading(profiles[2], 70, true));
-            AssertDeviceErrorState(tray, profiles[2].Id, "70",
-                "stale error keeps last percent");
+            BatteryReading stale70 = CreateErrorReading(profiles[2], 70, true);
+            PushReading(tray, stale70);
+            window.ApplyReading(stale70);
+            AssertDeviceStaleState(tray, profiles[2].Id, "70", "Normal",
+                "stale error keeps last percent without a red background");
+            AssertMainWindowStaleState(window, profiles[2].Id, "70%", false,
+                "dashboard stale 70 percent");
+
+            BatteryReading stale8 = CreateErrorReading(profiles[2], 8, true);
+            PushReading(tray, stale8);
+            window.ApplyReading(stale8);
+            AssertDeviceStaleState(tray, profiles[2].Id, "8", "Critical",
+                "stale critical keeps battery danger separate from availability");
+            AssertMainWindowStaleState(window, profiles[2].Id, "8%", true,
+                "dashboard stale 8 percent");
+
+            foreach (DeviceConnectionState connection in new[]
+            {
+                DeviceConnectionState.Sleeping,
+                DeviceConnectionState.Busy,
+                DeviceConnectionState.Error
+            })
+            {
+                BatteryReading variant = CreateErrorReading(profiles[2], 70, true);
+                variant.Connection = connection;
+                PushReading(tray, variant);
+                window.ApplyReading(variant);
+                AssertDeviceStaleState(tray, profiles[2].Id, "70", "Normal",
+                    "stale " + connection + " tray presentation");
+                AssertMainWindowStaleState(window, profiles[2].Id, "70%", false,
+                    "stale " + connection + " dashboard presentation");
+            }
+
+            BatteryReading expired8 = CreateErrorReading(profiles[2], 8, true);
+            expired8.LastSuccessfulAtUtc = DateTime.UtcNow.AddHours(-25);
+            PushReading(tray, expired8);
+            window.ApplyReading(expired8);
+            AssertDeviceExpiredState(tray, profiles[2].Id,
+                "expired stale value is not shown as the primary tray number");
+            AssertMainWindowExpiredState(window, profiles[2].Id,
+                "expired stale value is not shown as the primary card number");
+
             PushReading(tray, CreateErrorReading(profiles[2], null, false));
-            AssertDeviceErrorState(tray, profiles[2].Id, "—",
-                "error without last percent");
+            AssertDeviceUnavailableState(tray, profiles[2].Id,
+                "error without a successful value");
             PushReading(tray, CreateReading(profiles[2], DevicePresenceState.Present));
 
             foreach (DeviceProfile profile in profiles)
@@ -156,12 +196,22 @@ internal static class SmokeRunner
             settings.TrayIconMode = AppSettings.TrayIconModeCombined;
             InvokeApplyTrayMode(tray);
             AssertCombinedState(tray, "first combined switch");
-            AssertCombinedErrorState(tray, "first combined stale-error switch");
+            AssertCombinedStaleState(tray, "first combined stale switch");
+
+            for (int index = 0; index < profiles.Count; index++)
+            {
+                BatteryReading expired = CreateErrorReading(profiles[index],
+                    70 - index, true);
+                expired.LastSuccessfulAtUtc = DateTime.UtcNow.AddHours(-25);
+                PushReading(tray, expired);
+            }
+            AssertCombinedExpiredState(tray,
+                "combined expired values preserve detail only");
 
             foreach (DeviceProfile profile in profiles)
                 PushReading(tray, CreateErrorReading(profile, null, false));
-            AssertCombinedErrorWithoutValueState(tray,
-                "combined error without cached values");
+            AssertCombinedUnavailableState(tray,
+                "combined error without successful values");
 
             foreach (DeviceProfile profile in profiles)
                 PushReading(tray, CreateReading(profile, DevicePresenceState.Present));
@@ -330,6 +380,7 @@ internal static class SmokeRunner
     private static BatteryReading CreateReading(DeviceProfile profile,
         DevicePresenceState presence)
     {
+        DateTime nowUtc = DateTime.UtcNow;
         return new BatteryReading
         {
             ProfileId = profile.Id,
@@ -344,7 +395,11 @@ internal static class SmokeRunner
                 ? BatteryLevelBand.High
                 : BatteryLevelBand.Unknown,
             StatusText = presence == DevicePresenceState.Present ? "연결됨" : "현재 장치 없음",
-            SampledAtUtc = DateTime.UtcNow
+            SampledAtUtc = nowUtc,
+            LastAttemptAtUtc = nowUtc,
+            LastSuccessfulAtUtc = presence == DevicePresenceState.Present
+                ? (DateTime?)nowUtc
+                : null
         };
     }
 
@@ -358,6 +413,10 @@ internal static class SmokeRunner
         reading.IsStale = stale;
         reading.StatusText = "조회 오류";
         reading.DetailText = "synthetic error";
+        reading.LastAttemptAtUtc = DateTime.UtcNow;
+        reading.LastSuccessfulAtUtc = stale && percent.HasValue
+            ? (DateTime?)DateTime.UtcNow.AddMinutes(-5)
+            : null;
         return reading;
     }
 
@@ -449,47 +508,213 @@ internal static class SmokeRunner
             phase + ": active mode is not combined");
     }
 
-    private static void AssertDeviceErrorState(TrayService tray, string profileId,
-        string expectedText, string phase)
+    private static void AssertDeviceStaleState(TrayService tray, string profileId,
+        string expectedText, string expectedSeverity, string phase)
     {
         IDictionary slots = GetDeviceSlots(tray);
         Assert(slots.Contains(profileId), phase + ": device slot was not found");
-        AssertErrorSlot(slots[profileId], expectedText, phase);
+        AssertAttentionSlot(slots[profileId], expectedText,
+            "resolved|RecentStale|" + expectedSeverity + "|", phase);
+        Assert(GetSlotNotifyIcon(slots[profileId]).Text.Contains("마지막 확인"),
+            phase + ": tooltip does not expose stale age");
     }
 
-    private static void AssertCombinedErrorState(TrayService tray, string phase)
+    private static void AssertDeviceExpiredState(TrayService tray, string profileId,
+        string phase)
+    {
+        IDictionary slots = GetDeviceSlots(tray);
+        Assert(slots.Contains(profileId), phase + ": device slot was not found");
+        AssertAttentionSlot(slots[profileId], "—",
+            "resolved|ExpiredStale|Critical|", phase);
+        string tooltip = GetSlotNotifyIcon(slots[profileId]).Text;
+        Assert(tooltip.Contains("마지막 값 만료") && tooltip.Contains("8%"),
+            phase + ": expired tooltip does not preserve the last value");
+    }
+
+    private static void AssertDeviceUnavailableState(TrayService tray, string profileId,
+        string phase)
+    {
+        IDictionary slots = GetDeviceSlots(tray);
+        Assert(slots.Contains(profileId), phase + ": device slot was not found");
+        AssertAttentionSlot(slots[profileId], "—", "resolved|None|Unknown|", phase);
+        Assert(!GetSlotNotifyIcon(slots[profileId]).Text.Contains("마지막"),
+            phase + ": no-history tooltip incorrectly implies a last value");
+    }
+
+    private static void AssertCombinedStaleState(TrayService tray, string phase)
     {
         object slot = GetPrivateField(tray, "_combinedSlot");
         Assert(slot != null, phase + ": combined slot was not found");
-        AssertErrorSlot(slot, "67", phase);
-        Assert(GetSlotNotifyIcon(slot).Text.Contains("조회 오류 · 마지막 67%"),
-            phase + ": combined tooltip does not describe the stale error");
+        AssertAttentionSlot(slot, "67", "combined|67|", phase);
+        string tooltip = GetSlotNotifyIcon(slot).Text;
+        Assert(tooltip.Contains("마지막 67%") && tooltip.Contains("상태 주의 4"),
+            phase + ": combined tooltip does not describe the stale representative");
     }
 
-    private static void AssertCombinedErrorWithoutValueState(TrayService tray, string phase)
+    private static void AssertCombinedUnavailableState(TrayService tray, string phase)
     {
         object slot = GetPrivateField(tray, "_combinedSlot");
         Assert(slot != null, phase + ": combined slot was not found");
-        AssertErrorSlot(slot, "—", phase);
-        Assert(GetSlotNotifyIcon(slot).Text.Contains("조회 오류"),
-            phase + ": combined tooltip does not describe the error");
-        Assert(!GetSlotNotifyIcon(slot).Text.Contains("응답 대기"),
-            phase + ": combined error was mislabeled as pending");
+        AssertAttentionSlot(slot, "—", "combined|—|", phase);
+        string tooltip = GetSlotNotifyIcon(slot).Text;
+        Assert(tooltip.Contains("상태 확인 필요"),
+            phase + ": combined tooltip does not describe unavailable devices");
+        Assert(!tooltip.Contains("응답 대기"),
+            phase + ": combined unavailable state was mislabeled as pending");
     }
 
-    private static void AssertErrorSlot(object slot, string expectedText, string phase)
+    private static void AssertCombinedExpiredState(TrayService tray, string phase)
+    {
+        object slot = GetPrivateField(tray, "_combinedSlot");
+        Assert(slot != null, phase + ": combined slot was not found");
+        AssertAttentionSlot(slot, "—", "combined|—|", phase);
+        string tooltip = GetSlotNotifyIcon(slot).Text;
+        Assert(tooltip.Contains("마지막 67%") && tooltip.Contains("성공 "),
+            phase + ": combined expired detail lost value or success time: " + tooltip);
+    }
+
+    private static void AssertAttentionSlot(object slot, string expectedText,
+        string expectedRenderPrefix, string phase)
     {
         Forms.NotifyIcon notifyIcon = GetSlotNotifyIcon(slot);
         Assert(notifyIcon != null && notifyIcon.Visible,
-            phase + ": error NotifyIcon is not visible");
+            phase + ": attention NotifyIcon is not visible");
         string renderKey = Convert.ToString(GetSlotProperty(slot, "RenderKey"));
-        Assert(renderKey.StartsWith("error|" + expectedText + "|", StringComparison.Ordinal) ||
-               renderKey.StartsWith("combined|" + expectedText + "|", StringComparison.Ordinal),
-            phase + ": unexpected error render key: " + renderKey);
+        bool textMatches = renderKey.StartsWith("combined|", StringComparison.Ordinal)
+            ? renderKey.StartsWith("combined|" + expectedText + "|",
+                StringComparison.Ordinal)
+            : renderKey.Contains("|" + expectedText + "|badge:");
+        Assert(renderKey.StartsWith(expectedRenderPrefix, StringComparison.Ordinal) &&
+               textMatches &&
+               renderKey.Contains("attention:True"),
+            phase + ": unexpected attention render key: " + renderKey);
+        int backgroundArgb = Color.FromArgb(255, 17, 27, 46).ToArgb();
+        string expectedBackground = renderKey.StartsWith("combined|",
+            StringComparison.Ordinal)
+            ? "|" + backgroundArgb + "|"
+            : "background:" + backgroundArgb;
+        Assert(renderKey.Contains(expectedBackground),
+            phase + ": attention state changed the tray background");
         Icon icon = GetSlotProperty(slot, "CurrentIcon") as Icon;
-        Assert(icon != null, phase + ": current error icon is missing");
+        Assert(icon != null, phase + ": current attention icon is missing");
         using (Bitmap bitmap = icon.ToBitmap())
-            AssertRedErrorBackground(bitmap);
+        {
+            AssertDarkDeviceBackground(bitmap);
+            AssertAttentionBadge(bitmap);
+        }
+    }
+
+    private static void AssertMainWindowStaleState(MainWindow window, string profileId,
+        string expectedValue, bool critical, string phase)
+    {
+        object card = GetMainWindowCard(window, profileId, phase);
+        System.Windows.Controls.TextBlock value =
+            (System.Windows.Controls.TextBlock)GetPrivateField(card, "_valueText");
+        System.Windows.Controls.TextBlock status =
+            (System.Windows.Controls.TextBlock)GetPrivateField(card, "_statusText");
+        System.Windows.Controls.TextBlock sample =
+            (System.Windows.Controls.TextBlock)GetPrivateField(card, "_sampleText");
+        System.Windows.Shapes.Ellipse dot =
+            (System.Windows.Shapes.Ellipse)GetPrivateField(card, "_stateDot");
+        System.Windows.Controls.Border bar =
+            (System.Windows.Controls.Border)GetPrivateField(card, "_barFill");
+
+        Assert(string.Equals(value.Text, expectedValue, StringComparison.Ordinal),
+            phase + ": unexpected primary value " + value.Text);
+        Assert(value.Opacity < 0.7 && bar.Opacity < 0.7,
+            phase + ": stale battery value/bar is not dimmed");
+        Assert(string.Equals(status.Text, "최근 응답 없음", StringComparison.Ordinal) ||
+               string.Equals(status.Text, "장치에 접근할 수 없음", StringComparison.Ordinal),
+            phase + ": availability text is not factual: " + status.Text);
+        Assert(sample.Text.StartsWith("마지막 확인 ", StringComparison.Ordinal),
+            phase + ": last-success age is not shown");
+        AssertBrushColor(dot.Fill, 245, 183, 66,
+            phase + ": availability indicator is not amber");
+        if (critical)
+        {
+            AssertBrushColor(value.Foreground, 251, 96, 119,
+                phase + ": critical last value lost its danger color");
+            AssertBrushColor(bar.Background, 251, 96, 119,
+                phase + ": critical bar does not share battery severity");
+        }
+        else
+        {
+            AssertBrushColor(value.Foreground, 64, 210, 141,
+                phase + ": normal last value was colored as an error");
+            AssertBrushColor(bar.Background, 64, 210, 141,
+                phase + ": normal bar was colored as an error");
+        }
+    }
+
+    private static void AssertNotificationLatchSemantics(TrayService tray,
+        AppSettings settings, DeviceProfile profile)
+    {
+        HashSet<string> latched = GetPrivateField(tray,
+            "_lowBatteryNotifications") as HashSet<string>;
+        Assert(latched != null, "notification latch set is unavailable");
+        bool previousSetting = settings.NotificationsEnabled;
+        settings.NotificationsEnabled = true;
+        try
+        {
+            latched.Remove(profile.Id);
+            PushReading(tray, CreateErrorReading(profile, 8, true));
+            Assert(!latched.Contains(profile.Id),
+                "a stale critical value created a low-battery notification latch");
+
+            latched.Add(profile.Id);
+            PushReading(tray, CreateErrorReading(profile, 70, true));
+            Assert(latched.Contains(profile.Id),
+                "a stale value was treated as notification recovery");
+
+            BatteryReading recovered = CreateReading(profile,
+                DevicePresenceState.Present);
+            recovered.Percent = 26;
+            recovered.Band = BatteryReading.BandFromPercent(26);
+            PushReading(tray, recovered);
+            Assert(!latched.Contains(profile.Id),
+                "a fresh recovered value did not clear the notification latch");
+        }
+        finally
+        {
+            settings.NotificationsEnabled = previousSetting;
+            latched.Remove(profile.Id);
+        }
+    }
+
+    private static void AssertMainWindowExpiredState(MainWindow window,
+        string profileId, string phase)
+    {
+        object card = GetMainWindowCard(window, profileId, phase);
+        System.Windows.Controls.TextBlock value =
+            (System.Windows.Controls.TextBlock)GetPrivateField(card, "_valueText");
+        System.Windows.Controls.TextBlock detail =
+            (System.Windows.Controls.TextBlock)GetPrivateField(card, "_detailText");
+        System.Windows.Controls.TextBlock sample =
+            (System.Windows.Controls.TextBlock)GetPrivateField(card, "_sampleText");
+        Assert(string.Equals(value.Text, "—", StringComparison.Ordinal),
+            phase + ": expired value is still primary");
+        Assert(detail.Text.Contains("마지막 값 8%") && detail.Text.Contains("성공 시각"),
+            phase + ": expired detail did not preserve value and success time");
+        Assert(sample.Text.Contains("24시간 초과"),
+            phase + ": expired cutoff is not explained");
+    }
+
+    private static object GetMainWindowCard(MainWindow window, string profileId,
+        string phase)
+    {
+        IDictionary cards = GetPrivateField(window, "_cards") as IDictionary;
+        Assert(cards != null && cards.Contains(profileId),
+            phase + ": dashboard card was not found");
+        return cards[profileId];
+    }
+
+    private static void AssertBrushColor(System.Windows.Media.Brush brush,
+        byte red, byte green, byte blue, string message)
+    {
+        System.Windows.Media.SolidColorBrush solid =
+            brush as System.Windows.Media.SolidColorBrush;
+        Assert(solid != null && solid.Color.R == red && solid.Color.G == green &&
+            solid.Color.B == blue, message);
     }
 
     private static void AssertZeroSlotState(TrayService tray, string phase)
@@ -550,12 +775,12 @@ internal static class SmokeRunner
     {
         MethodInfo create = trayType.GetMethod("CreateStatusIcon",
             BindingFlags.Static | BindingFlags.NonPublic);
-        MethodInfo createWithBackground = trayType.GetMethod("CreateStatusIconWithBackground",
+        MethodInfo createWithAttention = trayType.GetMethod("CreateStatusIconWithAttention",
             BindingFlags.Static | BindingFlags.NonPublic);
         Assert(create != null, "CreateStatusIcon was not found");
-        Assert(createWithBackground != null, "CreateStatusIconWithBackground was not found");
+        Assert(createWithAttention != null, "CreateStatusIconWithAttention was not found");
 
-        string[] texts = { "100", "95", "64", "78", "70" };
+        string[] texts = { "100", "95", "64", "78", "8" };
         string[] shapes = { "headset", "keyboard", "mouse", "gamepad", "mouse" };
         string[] labels =
         {
@@ -563,7 +788,7 @@ internal static class SmokeRunner
             "Keyboard 95% charge",
             "Mouse 64%",
             "Gamepad 78%",
-            "Mouse error · last 70%"
+            "Mouse stale 8% · warning"
         };
         Color[] accents =
         {
@@ -571,17 +796,10 @@ internal static class SmokeRunner
             Color.FromArgb(255, 55, 206, 194),
             Color.FromArgb(255, 55, 206, 194),
             Color.FromArgb(255, 55, 206, 194),
-            Color.FromArgb(255, 255, 154, 169)
-        };
-        Color[] backgrounds =
-        {
-            Color.FromArgb(255, 17, 27, 46),
-            Color.FromArgb(255, 17, 27, 46),
-            Color.FromArgb(255, 17, 27, 46),
-            Color.FromArgb(255, 17, 27, 46),
-            Color.FromArgb(255, 157, 37, 60)
+            Color.FromArgb(255, 153, 67, 88)
         };
         bool[] charging = { false, true, false, false, false };
+        bool[] attention = { false, false, false, false, true };
 
         AssertDistinctDeviceShapes(create,
             new[] { "headset", "keyboard", "mouse", "gamepad" });
@@ -602,18 +820,19 @@ internal static class SmokeRunner
 
             for (int index = 0; index < texts.Length; index++)
             {
-                Icon icon = (Icon)createWithBackground.Invoke(null,
+                Icon icon = (Icon)createWithAttention.Invoke(null,
                     new object[]
                     {
                         texts[index], accents[index], charging[index], shapes[index],
-                        backgrounds[index]
+                        attention[index]
                     });
                 try
                 {
                     using (Bitmap native = icon.ToBitmap())
                     {
-                        if (index == texts.Length - 1)
-                            AssertRedErrorBackground(native);
+                        AssertDarkDeviceBackground(native);
+                        if (attention[index])
+                            AssertAttentionBadge(native);
                         int left = 20 + index * 225;
                         graphics.DrawRectangle(frame, left, 54, 205, 205);
                         graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
@@ -636,19 +855,38 @@ internal static class SmokeRunner
         }
     }
 
-    private static void AssertRedErrorBackground(Bitmap bitmap)
+    private static void AssertDarkDeviceBackground(Bitmap bitmap)
     {
-        int redPixels = 0;
+        int darkPixels = 0;
         for (int y = 0; y < bitmap.Height; y++)
         {
             for (int x = 0; x < bitmap.Width; x++)
             {
                 Color pixel = bitmap.GetPixel(x, y);
-                if (pixel.A > 200 && pixel.R > 120 && pixel.R > pixel.G * 2)
-                    redPixels++;
+                if (pixel.A > 200 && Math.Abs(pixel.R - 17) <= 3 &&
+                    Math.Abs(pixel.G - 27) <= 3 && Math.Abs(pixel.B - 46) <= 3)
+                    darkPixels++;
             }
         }
-        Assert(redPixels >= 40, "error tray icon does not contain a visible red background");
+        Assert(darkPixels >= 40,
+            "tray icon does not retain the neutral dark device background");
+    }
+
+    private static void AssertAttentionBadge(Bitmap bitmap)
+    {
+        int amberPixels = 0;
+        for (int y = 0; y <= Math.Min(11, bitmap.Height - 1); y++)
+        {
+            for (int x = Math.Min(21, bitmap.Width - 1); x < bitmap.Width; x++)
+            {
+                Color pixel = bitmap.GetPixel(x, y);
+                if (pixel.A > 180 && pixel.R > 190 && pixel.G > 125 &&
+                    pixel.B < 110)
+                    amberPixels++;
+            }
+        }
+        Assert(amberPixels >= 8,
+            "tray icon does not contain a visible amber attention badge");
     }
 
     private static void AssertDistinctDeviceShapes(MethodInfo create, string[] shapes)

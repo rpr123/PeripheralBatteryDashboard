@@ -61,7 +61,7 @@ namespace PeripheralBatteryDashboard.Diagnostics
                      ProviderSafetyPolicy.RequiresExactHidSelector(profile.ProviderId)) &&
                     !DeviceMonitorService.HasExactHidSelector(profile))
                 {
-                    readings.Add(BatteryReading.Unavailable(profile,
+                    AddObserved(readings, BatteryReading.Unavailable(profile,
                         DeviceConnectionState.Unsupported,
                         "정확한 HID 선택자 필요",
                         "VID/PID, Usage Page/Usage와 MI 번호 또는 MI 없음의 명시가 필요합니다.",
@@ -70,15 +70,17 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 }
                 if (!_registry.TryGet(profile.ProviderId, out provider))
                 {
-                    readings.Add(BatteryReading.Unavailable(profile, DeviceConnectionState.Unsupported,
-                        "지원 모듈 없음", profile.ProviderId, "provider-not-found"));
+                    AddObserved(readings, BatteryReading.Unavailable(profile,
+                        DeviceConnectionState.Unsupported, "지원 모듈 없음",
+                        profile.ProviderId, "provider-not-found"));
                     continue;
                 }
 
                 try
                 {
-                    readings.Add(await ReadProviderWithWatchdogAsync(profile, provider,
-                        token).ConfigureAwait(false));
+                    BatteryReading reading = await ReadProviderWithWatchdogAsync(
+                        profile, provider, token).ConfigureAwait(false);
+                    AddObserved(readings, reading);
                 }
                 catch (OperationCanceledException)
                 {
@@ -86,11 +88,32 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 }
                 catch (Exception ex)
                 {
-                    readings.Add(BatteryReading.Unavailable(profile, DeviceConnectionState.Error,
-                        "조회 오류", ex.Message, "exception"));
+                    AddObserved(readings, BatteryReading.Unavailable(profile,
+                        DeviceConnectionState.Error, "조회 오류", ex.Message,
+                        "exception"));
                 }
             }
             return readings;
+        }
+
+        private static void AddObserved(ICollection<BatteryReading> readings,
+            BatteryReading reading)
+        {
+            NormalizeAttemptTimestamps(reading, DateTime.UtcNow);
+            readings.Add(reading);
+        }
+
+        private static void NormalizeAttemptTimestamps(BatteryReading reading,
+            DateTime observedUtc)
+        {
+            if (reading == null)
+                return;
+            reading.LastAttemptAtUtc = observedUtc;
+            bool hasBatteryValue = reading.Percent.HasValue ||
+                reading.Band != BatteryLevelBand.Unknown;
+            if (reading.Connection == DeviceConnectionState.Connected &&
+                !reading.IsStale && hasBatteryValue)
+                reading.LastSuccessfulAtUtc = observedUtc;
         }
 
         private async Task<BatteryReading> ReadProviderWithWatchdogAsync(
@@ -191,8 +214,11 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 text.Append("- ").Append(reading.DisplayName)
                     .Append(" | ").Append(reading.Connection)
                     .Append(" | ").Append(reading.Percent.HasValue ? reading.Percent.Value + "%" : reading.StatusText)
+                    .Append(reading.IsStale ? " (stale)" : string.Empty)
                     .Append(" | ").Append(reading.Charge)
                     .Append(" | ").Append(reading.DetailText)
+                    .Append(" | attempt=").Append(FormatNullableUtc(reading.LastAttemptAtUtc))
+                    .Append(" | success=").Append(FormatNullableUtc(reading.LastSuccessfulAtUtc))
                     .AppendLine();
             }
 
@@ -245,6 +271,11 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 text.AppendLine("- enumeration error: " + ex.Message);
             }
             return text.ToString();
+        }
+
+        private static string FormatNullableUtc(DateTime? value)
+        {
+            return value.HasValue ? value.Value.ToUniversalTime().ToString("o") : "unknown";
         }
 
         private HidEnumerationResult EnumerateHidMetadataWithWatchdog(
@@ -307,6 +338,13 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 status = r.StatusText,
                 detail = r.DetailText,
                 sampledAtUtc = r.SampledAtUtc.ToString("o"),
+                lastAttemptAtUtc = r.LastAttemptAtUtc.HasValue
+                    ? r.LastAttemptAtUtc.Value.ToString("o")
+                    : null,
+                lastSuccessfulAtUtc = r.LastSuccessfulAtUtc.HasValue
+                    ? r.LastSuccessfulAtUtc.Value.ToString("o")
+                    : null,
+                stale = r.IsStale,
                 error = r.ErrorCode
             }).ToArray());
         }

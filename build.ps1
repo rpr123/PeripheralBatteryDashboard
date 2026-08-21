@@ -256,6 +256,17 @@ foreach ($documentName in @('README.md', 'AGENTS.md', 'CODEX-PROMPTS.md', 'DEVIC
     }
 }
 
+# Keep packaged source-derived text byte-stable across Git checkout settings.
+# Git stores these files with LF endings, while a Windows working tree may use CRLF.
+$utf8NoBom = New-Object Text.UTF8Encoding($false)
+Get-ChildItem -LiteralPath $distRoot -Recurse -File | Where-Object {
+    $_.Extension -in @('.config', '.json', '.md', '.txt') -or $_.Name -eq 'LICENSE'
+} | ForEach-Object {
+    $text = [IO.File]::ReadAllText($_.FullName)
+    $normalized = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+    [IO.File]::WriteAllText($_.FullName, $normalized, $utf8NoBom)
+}
+
 Write-Host ''
 Write-Host "빌드 완료: $distRoot"
 Get-ChildItem -LiteralPath $distRoot -File | Sort-Object Name | ForEach-Object {

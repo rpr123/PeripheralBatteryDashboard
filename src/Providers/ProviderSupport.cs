@@ -72,7 +72,9 @@ namespace PeripheralBatteryDashboard.Providers
         {
             if (ex is TimeoutException)
                 return BatteryReading.Unavailable(profile, DeviceConnectionState.Sleeping,
-                    "절전 또는 응답 없음", "다음 조회에서 다시 시도합니다.", "timeout");
+                    "최근 응답 없음",
+                    "장치가 절전 상태이거나 연결이 일시적으로 응답하지 않을 수 있습니다. 다음 조회에서 다시 시도합니다.",
+                    "timeout");
 
             IOException io = ex as IOException;
             if (io != null)
@@ -83,7 +85,9 @@ namespace PeripheralBatteryDashboard.Providers
                     code = win32.NativeErrorCode;
                 if (code == 5 || code == 32)
                     return BatteryReading.Unavailable(profile, DeviceConnectionState.Busy,
-                        "다른 앱이 장치 사용 중", "제조사 앱을 닫거나 잠시 후 다시 시도하세요.", "busy");
+                        "장치에 접근할 수 없음",
+                        "다른 앱이 장치를 사용 중이거나 장치가 일시적으로 응답하지 않을 수 있습니다. 잠시 후 다시 시도하세요.",
+                        "busy");
             }
 
             return BatteryReading.Unavailable(profile, DeviceConnectionState.Error,

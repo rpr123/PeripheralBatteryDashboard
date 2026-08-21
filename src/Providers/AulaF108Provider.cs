@@ -44,7 +44,9 @@ namespace PeripheralBatteryDashboard.Providers
                             return ProviderSupport.InvalidBatteryPercent(profile, percent);
                         if (percent <= 0)
                             return BatteryReading.Unavailable(profile, DeviceConnectionState.Sleeping,
-                                "키보드 응답 없음", "키보드가 절전 중일 수 있습니다.", "zero-battery-response");
+                                "최근 응답 없음",
+                                "키보드가 절전 상태이거나 동글 연결이 일시적으로 응답하지 않을 수 있습니다.",
+                                "zero-battery-response");
 
                         return ProviderSupport.Connected(profile, percent,
                             BatteryReading.BandFromPercent(percent),
@@ -56,7 +58,9 @@ namespace PeripheralBatteryDashboard.Providers
                 }
 
                 return BatteryReading.Unavailable(profile, DeviceConnectionState.Sleeping,
-                    "상태 응답 없음", "키보드가 절전 중일 수 있습니다.", "unexpected-response");
+                    "최근 응답 없음",
+                    "배터리 상태 응답을 확인하지 못했습니다. 키보드가 절전 상태일 가능성도 있습니다.",
+                    "unexpected-response");
             }
             catch (OperationCanceledException)
             {

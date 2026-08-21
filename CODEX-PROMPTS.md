@@ -1,13 +1,13 @@
 # Codex 작업 프롬프트
 
-이 문서는 Peripheral Battery Dashboard의 설치·업데이트와 기기별 조정을 로컬 Codex 또는 다른 코딩 에이전트에 맡길 때 전달하는 프롬프트 모음입니다. 사용자가 저장소 복제, ZIP 해제, 빌드와 설치 파일 배치를 직접 수행하는 흐름은 전제하지 않습니다.
+이 문서는 Peripheral Battery Dashboard의 설치·업데이트·제거와 기기별 조정을 로컬 Codex 또는 다른 코딩 에이전트에 맡길 때 전달하는 프롬프트 모음입니다. 사용자가 저장소 복제, ZIP 해제, 빌드와 설치 파일 배치를 직접 수행하는 흐름은 전제하지 않습니다.
 
 공식 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
 ## 사용 방법
 
 1. 설치할 Windows PC에서 로컬 셸과 파일을 사용할 수 있는 Codex 또는 코딩 에이전트를 엽니다.
-2. 아래에서 목적에 맞는 프롬프트 하나를 골라 **코드 블록 전체를 복사해 전달**합니다. 저장소는 에이전트가 승인 후 확보하므로 사용자가 먼저 내려받을 필요가 없습니다.
+2. 아래에서 설치·진단·기기 추가·제거 중 목적에 맞는 프롬프트 하나를 골라 **코드 블록 전체를 복사해 전달**합니다. 저장소는 에이전트가 승인 후 확보하므로 사용자가 먼저 내려받을 필요가 없습니다.
 3. 괄호로 표시한 기기 정보는 알고 있을 때만 실제 값으로 바꿉니다. 기기 목록에는 한 줄에 하나씩 여러 제품을 적을 수 있으며 기기마다 프롬프트를 따로 보낼 필요가 없습니다. 1번 설치 프롬프트에서는 목록을 모두 비워도 에이전트가 승인된 읽기 전용 descriptor 인벤토리로 연결된 HID 후보를 찾는 것이 기본 흐름입니다.
 4. 에이전트가 설명하는 다운로드·설치·저장소 밖 쓰기·레지스트리/자동 실행 변경·실기기 I/O의 대상과 영향을 확인하고 필요한 단계만 승인합니다.
 
@@ -26,11 +26,11 @@ Peripheral Battery Dashboard를 내 Windows PC에 안전하게 설치하고 아�
 
 절대 종료 규칙: `저장소에 프로토콜이 없다`, `기본 목록에 없다`, `사용자가 프로토콜 문서·캡처·명령 바이트를 주지 않았다`는 말만으로 지원 보류하거나 작업을 끝내지 마라. 프로토콜 발견은 이 요청의 핵심이며 에이전트가 수행할 일이다. 먼저 외부로 전달할 redacted 식별 정보와 조사 범위를 설명하고 네트워크 접근 승인을 요청하라. 승인되면 제조사 공식 문서·지원/다운로드 페이지·법적으로 검토 가능한 웹 드라이버 자산·감사 가능한 기기별 오픈소스와 공개 raw source를 네가 직접 조사해 읽기 전용 배터리 요청·응답 근거를 찾아라. 네트워크 권한이 없으면 사용자에게 프로토콜을 찾아 달라고 요구하지 말고 필요한 권한 승인을 요청하라. 문서의 검색 행렬과 출처 종류를 실제로 확인하고 구체적인 URL·질의·결과를 보고한 뒤에도 근거가 없을 때만 해당 기기를 `지원 보류(blocked)`로 판정할 수 있다. 검색 없이 즉시 보류한 결과는 작업 실패다.
 
-1. 먼저 읽기 전용으로 Windows 10/11 x64 여부, .NET Framework 4.8, Git과 VS 2022 Build Tools 유무, 기존 설치 위치와 후보 설치 경로를 확인하고 계획을 요약한다. 앱 실행과 현재 사용자용 Release 설치에는 관리자 권한이 필요하지 않다. 누락된 Microsoft 런타임이나 빌드 도구가 권한 상승을 요구하면 별도 승인 없이 설치하지 말고 Release 경로 또는 `설치 보류(blocked)`를 선택한다.
-2. 기존 프로젝트 폴더가 있으면 origin URL이 위 공식 URL과 같은지, HEAD와 dirty 상태를 읽기 전용으로 확인하고 사용자 변경을 보존한다. origin이 다르면 그 복사본을 실행하지 않는다. 공식 로컬 복사본이 없으면 공식 Release ZIP과 SHA 파일을 받을지, 위 URL을 `git clone`할지 판단하고 정확한 URL·대상 경로·생길 파일을 보여 준 뒤 네트워크와 쓰기에 대한 승인을 기다린다.
-3. clone을 선택하면 origin과 HEAD를 확인한 뒤 저장소 문서를 읽는다. Release를 선택하면 공식 ZIP과 `SHA256SUMS.txt`를 받고, 압축 해제나 실행 전에 SHA-256을 정확히 비교한다. 불일치하면 즉시 중단한다. 일치하면 압축을 해제한 뒤 포함된 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 읽는다. SmartScreen이나 보안 경고를 임의로 우회하지 않는다.
+1. 먼저 읽기 전용으로 Windows 10/11 x64 여부, .NET Framework 4.8, Git과 VS 2022 Build Tools 유무, 기존 설치 위치와 후보 설치 경로를 확인하고 계획을 요약한다. 앱 실행과 현재 사용자용 패키지 설치에는 관리자 권한이 필요하지 않다. 누락된 Microsoft 런타임이나 빌드 도구가 권한 상승을 요구하면 별도 승인 없이 설치하지 말고 검증된 패키지 경로 또는 `설치 보류(blocked)`를 선택한다.
+2. 기존 프로젝트 폴더가 있으면 origin URL이 위 공식 URL과 같은지, HEAD와 dirty 상태를 읽기 전용으로 확인하고 사용자 변경을 보존한다. origin이 다르면 그 복사본을 실행하지 않는다. 공식 로컬 복사본이 없으면 위 URL의 동일 Git ref에 함께 커밋된 `releases/PeripheralBatteryDashboard-v1.1.3-win-x64.zip`과 `releases/SHA256SUMS.txt`를 받을지, 위 URL을 `git clone`할지 판단하고 정확한 ref·URL·대상 경로·생길 파일을 보여 준 뒤 네트워크와 쓰기에 대한 승인을 기다린다. 이 ZIP을 GitHub Release 자산으로 오인하거나 다른 ref의 문서·해시와 섞지 않는다.
+3. clone을 선택하면 origin과 HEAD를 확인한 뒤 저장소 문서를 읽는다. 같은-ref 패키지를 선택하면 동일 Git ref의 ZIP과 `SHA256SUMS.txt`를 받고, 압축 해제나 실행 전에 SHA-256을 정확히 비교한다. 불일치하거나 같은 파일명의 항목이 중복되면 즉시 중단한다. 일치하면 압축을 해제한 뒤 포함된 README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md를 읽는다. SmartScreen이나 보안 경고를 임의로 우회하지 않는다.
 4. 검증된 배포본과 소스 빌드 중 적합한 방법을 선택한다. 빌드한다면 격리된 출력 폴더를 사용한다. 다운로드, 빌드 도구·런타임 설치, 저장소 밖의 안정된 앱 폴더 쓰기 등 외부 상태 변경 전에 정확한 대상과 영향을 설명하고 내 승인을 받는다.
-5. 실행 파일을 호출하기 전에 Windows `FileVersionInfo` 메타데이터를 읽어 현재 배포 기준인 1.1.2 이상인지 확인한다. 그보다 오래된 버전에서는 이 문서가 요구하는 인벤토리·조회 격리·복구 동작을 전부 보장할 수 없으므로 새 옵션이나 실기기 진단을 시험하지 말고 1.1.2 이상 배포본 또는 소스 빌드로 교체한다. 버전을 확인한 뒤에만 `--version`과 `--help`를 실행해 `--inventory` 지원과 알 수 없는 옵션의 비대화형 오류 종료를 확인한다. 그다음 실제 장치 I/O가 없는 `PeripheralBatteryDashboard.Diagnostics.exe --self-test`를 실행하고 종료 코드 0을 확인한다. 빌드 또는 self-test가 실행되지 않았거나 실패했다면 구현 완료로 보고하지 않는다.
+5. 실행 파일을 호출하기 전에 Windows `FileVersionInfo` 메타데이터를 읽어 현재 배포 기준인 1.1.3 이상인지 확인한다. 그보다 오래된 버전에서는 이 문서가 요구하는 인벤토리·조회 격리·복구 동작을 전부 보장할 수 없으므로 새 옵션이나 실기기 진단을 시험하지 말고 1.1.3 이상 배포본 또는 소스 빌드로 교체한다. 버전을 확인한 뒤에만 `--version`과 `--help`를 실행해 `--inventory` 지원과 알 수 없는 옵션의 비대화형 오류 종료를 확인한다. 그다음 실제 장치 I/O가 없는 `PeripheralBatteryDashboard.Diagnostics.exe --self-test`를 실행하고 종료 코드 0을 확인한다. 빌드 또는 self-test가 실행되지 않았거나 실패했다면 구현 완료로 보고하지 않는다.
    Windows PowerShell 실행 정책이 스크립트를 막으면 `-ExecutionPolicy Bypass`를 추가하거나 시스템 정책을 바꾸지 않는다. 이미 설치된 신뢰 가능한 `pwsh`로 같은 저장소 스크립트를 실행하고, 그것도 없으면 필요한 설치와 영향을 설명해 승인받기 전까지 빌드를 보류한다.
 6. 기기 목록이나 제품명이 비어 있어도 `PeripheralBatteryDashboard.Diagnostics.exe --inventory`로 Windows에 HID collection으로 노출된 USB 동글·유선·Bluetooth HID 후보와, Windows에 등록된 표준 Bluetooth Battery Service 인터페이스를 자동 탐색한다. 실행 전에 정확한 실행 파일과 열거 대상, descriptor·서비스 인터페이스 메타데이터 조회이며 provider/battery 요청, HID input read·output write·Feature I/O와 GATT characteristic 값 읽기를 전혀 수행하지 않는다는 점, redacted 출력 필드를 설명하고 내 승인을 기다린다. 승인 후 실행하며 종료 코드 0, `complete=true`, `profileWarningCount=0`인지 먼저 확인한다. 하나라도 아니면 빈 목록을 `기기 없음`으로 해석하지 말고 `warningCodes`와 `coverage`를 보고한 뒤 불완전 상태로 둔다. 정상 결과에서는 `researchCandidate=true`인 그룹과 broad selector를 미지원·재검토 후보로 삼는다. `exact-selector-match`는 프로필 선택자 일치일 뿐 공급자 로드나 실제 배터리 조회 성공의 증명이 아니므로 self-test와 공급자 등록도 확인한다. `bestEffortSanitizedProductString`은 일부 민감 패턴을 가렸을 뿐 개인정보 비포함을 보장하지 않으므로 외부 검색어로 보내기 전에 로컬 검토하고, `deviceGroupId`도 로컬 비교용 가명 값이므로 외부 검색에 쓰지 않는다. 이어서 기기 목록이 비어 있는 기본 흐름에서는 XInput/game-controller, 표준 Battery Service가 없는 Bluetooth, 오디오 엔드포인트와 현재 연결된 PnP 장치의 읽기 전용·redacted Windows 메타데이터 점검도 대상·필드·개인정보 제거 방식을 설명하고 승인받아 수행한다. 장치 요청이나 공급자 실행을 해서는 안 된다. 그래도 XInput-only·audio-only·표준 Battery Service가 없는 Bluetooth 장치 존재를 확정할 수 없을 때만 배터리 주변기기가 더 있는지 한 번의 통합 최소 질문을 한다. 설치가 끝났다는 이유로 여기서 작업을 종료하지 말고 발견한 미지원 후보 전부에 대해 7~8단계를 같은 요청 안에서 계속 수행한다.
    같은 `--inventory`는 GATT characteristic 값을 읽지 않고 Windows에 등록된 표준 Bluetooth Battery Service `180F` 인터페이스 메타데이터도 열거한다. `bluetoothBatteryServices` 항목이 있으면 `2A19` 표준 잔량 프로토콜이 이미 확인된 것이므로 제조사별 프로토콜 탐색보다 `builtin.bluetooth.gatt-battery` 사용자 프로필 등록을 우선한다. 해당 항목의 이 PC 전용 `localServiceId`를 항상 사용하고, exact VID/PID가 있으면 추가 AND 조건으로 함께 기록한다. `localServiceId`는 가명 로컬 식별자이므로 외부 검색·공개 프로필·이슈에 넣지 않는다. 같은 조건의 후보가 여러 개면 첫 항목을 임의 선택하지 말고 검토한 이름 보조 조건으로 더 좁힌다. 표준 Battery Service가 없는 Bluetooth 기기만 7단계의 제조사 전용 프로토콜 조사로 넘긴다.
@@ -41,7 +41,7 @@ Peripheral Battery Dashboard를 내 Windows PC에 안전하게 설치하고 아�
    새 프로토콜 또는 새 공급자는 자동 적용 전에 구현하지 않은 별도의 frontier급 고수준 추론 에이전트가 독립 검토를 한 번 더 수행한다. 검토자는 원본 근거·URL·모든 캡처·parser fixture·전체 `ReadAsync` 경로를 다시 열어 상태/subtype 의미, identity binding, 핸들 접근 권한과 금지된 쓰기 호출을 확인한다. 적합한 독립 검토를 수행할 수 없거나 불일치가 남으면 프로필/플러그인을 설치·로드하지 않고 `미검증/부분 지원`으로 보고한다.
 9. `--diagnostics`와 `--snapshot`은 매칭된 ProviderId의 검증된 배터리 요청을 실제 장치에 보낼 수 있다. 새 명령을 포함해 실행 전에 정확한 ProviderId·VID/PID·MI·Usage·보고서 타입과 길이·전송 바이트·읽기 전용 근거·예상 응답·실패 영향을 보여 주고 내 별도 승인을 기다린다. 승인 전에는 실기기 요청을 보내지 않는다. 장치 시리얼, 전체 장치 경로, Bluetooth 주소, 사용자명, 토큰은 출력·업로드·커밋하지 않는다.
 10. 구현과 비실기기 검증이 끝난 뒤 GUI 첫 실행 전에 자동 실행을 켤지 끌지 묻는다. 끄기를 선택하면 전체 설정 파일과 `StartWithWindows=false` 쓰기를 설명하고 승인 후 먼저 준비한다. 켜기를 선택하면 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PeripheralBatteryDashboard` 값과 정확한 실행 명령을 보여 준다. GUI는 이 레지스트리 상태를 동기화하고 모니터를 시작해 exact-match 공급자의 장치 요청을 보낼 수 있음을 함께 설명한 뒤 첫 실행에 대한 별도 승인을 기다린다. 승인이 없으면 GUI 실행과 관련 파일·레지스트리 변경을 보류한다.
-11. 최종 보고에는 공식 소스 획득 방법과 origin/commit 또는 Release SHA-256, 설치 위치, 관리자 권한 사용 여부, 변경 파일, 조사한 URL·리비전·라이선스, fixture·빌드와 --self-test의 실제 실행 명령과 종료 코드, 자동 실행 선택·승인과 실제 파일/레지스트리 상태, 실기기 I/O 여부와 ProviderId, 새 HID write 전송 여부를 포함한다. 컴파일이나 테스트가 실행되지 않았거나 실패했다면 지원 완료가 아니라 미검증/실패로 판정한다. `--inventory`와 승인된 Windows 메타데이터 점검에서 확인했거나 최소 질문으로 식별한 후보마다 `내장 공급자 재사용+사용자 프로필 등록 / 새 공급자 구현+사용자 프로필 등록 / 배터리 비대상 / 조사 후 지원 보류` 중 하나의 결론과 근거를 빠짐없이 적고, generic 이름만 반복하거나 `지원 판정 보류`로 남겨 두지 않는다. 실제 등록한 사용자 프로필과 공급자가 없으면 설치만으로 호환성 작업을 완료했다고 보고하지 않는다. 내 요청 없이 GitHub 게시, 커밋, 푸시 또는 릴리스를 하지 않는다.
+11. 최종 보고에는 공식 소스 획득 방법과 origin/commit, 또는 같은-ref 패키지의 Git ref와 SHA-256, 설치 위치, 관리자 권한 사용 여부, 변경 파일, 조사한 URL·리비전·라이선스, fixture·빌드와 --self-test의 실제 실행 명령과 종료 코드, 자동 실행 선택·승인과 실제 파일/레지스트리 상태, 실기기 I/O 여부와 ProviderId, 새 HID write 전송 여부를 포함한다. 컴파일이나 테스트가 실행되지 않았거나 실패했다면 지원 완료가 아니라 미검증/실패로 판정한다. `--inventory`와 승인된 Windows 메타데이터 점검에서 확인했거나 최소 질문으로 식별한 후보마다 `내장 공급자 재사용+사용자 프로필 등록 / 새 공급자 구현+사용자 프로필 등록 / 배터리 비대상 / 조사 후 지원 보류` 중 하나의 결론과 근거를 빠짐없이 적고, generic 이름만 반복하거나 `지원 판정 보류`로 남겨 두지 않는다. 실제 등록한 사용자 프로필과 공급자가 없으면 설치만으로 호환성 작업을 완료했다고 보고하지 않는다. 내 요청 없이 GitHub 게시, 커밋, 푸시 또는 릴리스를 하지 않는다.
 
 사용 제품 및 실제 연결 방식(한 줄에 하나씩, 여러 개 가능, 전부 비워도 됨):
 - [제품명/리비전] — [Bluetooth / 2.4GHz USB 동글 / 유선]
@@ -149,6 +149,18 @@ README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md, Profiles/builtin.devic
 선택 메모:
 - 제조사 소프트웨어/문서: [알고 있으면 입력, 몰라도 됨]
 - 제공 가능한 redacted diagnostics 또는 캡처: [있으면 입력, 없어도 됨]
+```
+
+## 5. 설치본 제거
+
+```text
+이 Windows PC에서 Peripheral Battery Dashboard를 안전하게 제거해 줘. 사용자가 폴더나 레지스트리를 직접 지우도록 넘기지 마라.
+
+먼저 읽기 전용으로 실행 중인 Peripheral Battery Dashboard 프로세스의 정확한 실행 경로, 실제 설치 폴더, `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PeripheralBatteryDashboard` 값, `%LOCALAPPDATA%\PeripheralBatteryDashboard`의 설정과 사용자 프로필 존재 여부를 확인한다. 다른 프로세스나 이름이 비슷한 폴더는 대상으로 삼지 마라.
+
+앱 종료, 자동 실행 값 제거, 설치 폴더 제거, 사용자 설정과 장치 프로필의 보존 또는 삭제를 각각 구분해 정확한 대상과 영향을 보여 줘. 특히 사용자 프로필은 재설치 때 재사용할 수 있으므로 보존할지 삭제할지 묻고, 내 승인을 받은 항목만 변경하라.
+
+승인 후 정확한 앱 프로세스를 종료하고 자동 실행 값을 제거한 다음, 승인된 설치 폴더와 사용자 데이터만 제거하라. 완료 후 실행 중인 앱이 없는지, 자동 실행 값이 남지 않았는지, 보존하거나 삭제한 사용자 데이터와 제거하지 않은 항목을 보고하라. 내 요청 없이 저장소, 빌드 도구, 드라이버 또는 관련 없는 파일을 삭제하지 마라.
 ```
 
 ## 에이전트 결과를 확인할 때
