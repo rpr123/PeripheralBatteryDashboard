@@ -515,6 +515,11 @@ internal static class SmokeRunner
         Assert(slots.Contains(profileId), phase + ": device slot was not found");
         AssertAttentionSlot(slots[profileId], expectedText,
             "resolved|RecentStale|" + expectedSeverity + "|", phase);
+        int expectedAccent = string.Equals(expectedSeverity, "Critical",
+            StringComparison.Ordinal)
+            ? Color.FromArgb(255, 153, 67, 88).ToArgb()
+            : Color.FromArgb(255, 39, 131, 132).ToArgb();
+        AssertDeviceAccent(slots[profileId], expectedAccent, phase);
         Assert(GetSlotNotifyIcon(slots[profileId]).Text.Contains("마지막 확인"),
             phase + ": tooltip does not expose stale age");
     }
@@ -526,6 +531,8 @@ internal static class SmokeRunner
         Assert(slots.Contains(profileId), phase + ": device slot was not found");
         AssertAttentionSlot(slots[profileId], "—",
             "resolved|ExpiredStale|Critical|", phase);
+        AssertDeviceAccent(slots[profileId],
+            Color.FromArgb(255, 120, 137, 160).ToArgb(), phase);
         string tooltip = GetSlotNotifyIcon(slots[profileId]).Text;
         Assert(tooltip.Contains("마지막 값 만료") && tooltip.Contains("8%"),
             phase + ": expired tooltip does not preserve the last value");
@@ -537,6 +544,8 @@ internal static class SmokeRunner
         IDictionary slots = GetDeviceSlots(tray);
         Assert(slots.Contains(profileId), phase + ": device slot was not found");
         AssertAttentionSlot(slots[profileId], "—", "resolved|None|Unknown|", phase);
+        AssertDeviceAccent(slots[profileId],
+            Color.FromArgb(255, 120, 137, 160).ToArgb(), phase);
         Assert(!GetSlotNotifyIcon(slots[profileId]).Text.Contains("마지막"),
             phase + ": no-history tooltip incorrectly implies a last value");
     }
@@ -602,6 +611,13 @@ internal static class SmokeRunner
             AssertDarkDeviceBackground(bitmap);
             AssertAttentionBadge(bitmap);
         }
+    }
+
+    private static void AssertDeviceAccent(object slot, int expectedArgb, string phase)
+    {
+        string renderKey = Convert.ToString(GetSlotProperty(slot, "RenderKey"));
+        Assert(renderKey.Contains("|badge:True|" + expectedArgb + "|background:"),
+            phase + ": unexpected device accent in render key: " + renderKey);
     }
 
     private static void AssertMainWindowStaleState(MainWindow window, string profileId,

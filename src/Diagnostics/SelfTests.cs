@@ -38,6 +38,7 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 AppSettings.TrayIconModePerDevice, "invalid tray mode fallback");
             Check(failures, AppSettings.NormalizeTrayIconMode(null) ==
                 AppSettings.TrayIconModePerDevice, "missing tray mode fallback");
+            CheckBatteryHistoryStore(failures);
             CheckPresentationSemantics(failures);
             CheckTrayIconPureHelpers(failures);
 
@@ -1372,6 +1373,186 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 "inventory redacts additional address and embedded path forms");
         }
 
+        private static void CheckBatteryHistoryStore(List<string> failures)
+        {
+            string directory = Path.Combine(Path.GetTempPath(),
+                "PeripheralBatteryDashboard-history-" + Guid.NewGuid().ToString("N"));
+            string path = Path.Combine(directory, "battery-history.json");
+            DateTime oneHourAgo = DateTime.UtcNow.AddHours(-1);
+            DateTime successAt = new DateTime(
+                oneHourAgo.Ticks - oneHourAgo.Ticks % TimeSpan.TicksPerSecond,
+                DateTimeKind.Utc);
+            DeviceProfile profile = new DeviceProfile
+            {
+                Id = "history.fixture",
+                DisplayName = "History fixture",
+                ProviderId = "builtin.bluetooth.gatt-battery",
+                Match = new DeviceMatch
+                {
+                    Transport = "bluetooth-gatt",
+                    VendorId = "0x045E",
+                    ProductIds = new List<string> { "0x0B13" },
+                    BluetoothServiceId = "bt-bas-0123456789abcdef01234567"
+                }
+            };
+            profile.ProviderOptions["BluetoothNameContains"] =
+                "Private Fixture Name";
+            profile.ProviderOptions["AllowUnboundXInput"] = false;
+            try
+            {
+                BatteryReading fresh = PresentationReading(profile,
+                    DeviceConnectionState.Connected, 70, false,
+                    DevicePresenceState.Present);
+                fresh.LastSuccessfulAtUtc = successAt;
+                using (BatteryHistoryStore store = new BatteryHistoryStore(path))
+                {
+                    store.RecordSuccessfulReading(profile, fresh);
+                    store.Flush();
+                    Check(failures, string.IsNullOrEmpty(store.LastError),
+                        "battery history saves without an error");
+                }
+
+                string persisted = File.ReadAllText(path);
+                Check(failures,
+                    persisted.Contains("history.fixture") &&
+                    !persisted.Contains(profile.Match.BluetoothServiceId) &&
+                    !persisted.Contains("Private Fixture Name"),
+                    "battery history stores a fingerprint without local identity text");
+
+                LastSuccessfulValueSnapshot restored;
+                using (BatteryHistoryStore store = new BatteryHistoryStore(path))
+                {
+                    restored = store.GetSnapshot(profile);
+                    Check(failures, string.IsNullOrEmpty(store.LastError),
+                        "battery history reloads without an error: " + store.LastError);
+                    Check(failures, restored != null && restored.Percent == 70 &&
+                            restored.SuccessfulAtUtc == successAt,
+                        "battery history restores the verified success across restart");
+
+                    DeviceProfile changedIdentity = new DeviceProfile
+                    {
+                        Id = profile.Id,
+                        ProviderId = profile.ProviderId,
+                        Match = new DeviceMatch
+                        {
+                            Transport = "bluetooth-gatt",
+                            VendorId = "0x045E",
+                            ProductIds = new List<string> { "0xFFFF" },
+                            BluetoothServiceId = profile.Match.BluetoothServiceId
+                        }
+                    };
+                    changedIdentity.ProviderOptions["BluetoothNameContains"] =
+                        "Private Fixture Name";
+                    Check(failures, store.GetSnapshot(changedIdentity) == null,
+                        "battery history rejects a reused profile id with changed identity");
+
+                    DeviceProfile changedNameIdentity = new DeviceProfile
+                    {
+                        Id = profile.Id,
+                        ProviderId = profile.ProviderId,
+                        Match = new DeviceMatch
+                        {
+                            Transport = profile.Match.Transport,
+                            VendorId = profile.Match.VendorId,
+                            ProductIds = new List<string>(profile.Match.ProductIds),
+                            BluetoothServiceId = profile.Match.BluetoothServiceId
+                        }
+                    };
+                    changedNameIdentity.ProviderOptions["BluetoothNameContains"] =
+                        "Another Fixture Name";
+                    Check(failures, store.GetSnapshot(changedNameIdentity) == null,
+                        "battery history fingerprint includes the Bluetooth name selector");
+
+                    changedNameIdentity.ProviderOptions["BluetoothNameContains"] =
+                        "Private Fixture Name";
+                    changedNameIdentity.ProviderOptions["AllowUnboundXInput"] = true;
+                    Check(failures, store.GetSnapshot(changedNameIdentity) == null,
+                        "battery history fingerprint includes unbound XInput permission");
+                }
+
+                BatteryReading replacement = PresentationReading(profile,
+                    DeviceConnectionState.Connected, 69, false,
+                    DevicePresenceState.Present);
+                replacement.LastSuccessfulAtUtc = successAt.AddMinutes(1);
+                using (BatteryHistoryStore store = new BatteryHistoryStore(path))
+                {
+                    store.RecordSuccessfulReading(profile, replacement);
+                    store.Flush();
+                }
+                using (BatteryHistoryStore store = new BatteryHistoryStore(path))
+                {
+                    LastSuccessfulValueSnapshot replaced = store.GetSnapshot(profile);
+                    Check(failures, replaced != null && replaced.Percent == 69 &&
+                            !File.Exists(path + ".tmp"),
+                        "battery history atomically replaces the prior successful value");
+                }
+
+                DateTime retryAt = successAt.AddMinutes(10);
+                BatteryReading absent = BatteryReading.Unavailable(profile,
+                    DeviceConnectionState.Disconnected, "없음", "fixture", "absent");
+                LastSuccessfulValueSnapshot retained =
+                    DeviceMonitorService.ApplyReadingHistory(restored, absent,
+                        DevicePresenceState.Absent, retryAt);
+                BatteryReading timeout = BatteryReading.Unavailable(profile,
+                    DeviceConnectionState.Error, "최근 응답 없음", "fixture", "timeout");
+                DeviceMonitorService.ApplyReadingHistory(retained, timeout,
+                    DevicePresenceState.Present, retryAt.AddMinutes(1));
+                Check(failures, ReferenceEquals(retained, restored) &&
+                        !absent.Percent.HasValue && timeout.Percent == 70 &&
+                        timeout.IsStale && timeout.LastSuccessfulAtUtc == successAt,
+                    "temporary absence hides but does not discard verified history");
+
+                DateTime expiredSuccessAt = DateTime.UtcNow.AddHours(-25);
+                BatteryReading expiredFresh = PresentationReading(profile,
+                    DeviceConnectionState.Connected, 70, false,
+                    DevicePresenceState.Present);
+                expiredFresh.LastSuccessfulAtUtc = expiredSuccessAt;
+                using (BatteryHistoryStore store = new BatteryHistoryStore(path))
+                {
+                    store.RecordSuccessfulReading(profile, expiredFresh);
+                    store.Flush();
+                }
+                LastSuccessfulValueSnapshot expiredSnapshot;
+                using (BatteryHistoryStore store = new BatteryHistoryStore(path))
+                    expiredSnapshot = store.GetSnapshot(profile);
+                BatteryReading expiredTimeout = BatteryReading.Unavailable(profile,
+                    DeviceConnectionState.Error, "최근 응답 없음", "fixture", "timeout");
+                DateTime expiredAttemptAt = DateTime.UtcNow;
+                DeviceMonitorService.ApplyReadingHistory(expiredSnapshot,
+                    expiredTimeout, DevicePresenceState.Present, expiredAttemptAt);
+                DevicePresentationState expiredState =
+                    DevicePresentationResolver.Resolve(profile, expiredTimeout,
+                        expiredAttemptAt);
+                Check(failures, expiredSnapshot != null &&
+                        expiredTimeout.Percent == 70 && expiredTimeout.IsStale &&
+                        expiredState.Freshness == BatteryValueFreshness.ExpiredStale &&
+                        !expiredState.HasDisplayValue,
+                    "restored history older than 24 hours remains detailed but not primary");
+
+                File.WriteAllText(path, "{not-json", new UTF8Encoding(false));
+                using (BatteryHistoryStore corrupt = new BatteryHistoryStore(path))
+                {
+                    Check(failures, corrupt.GetSnapshot(profile) == null &&
+                            !string.IsNullOrEmpty(corrupt.LastError),
+                        "corrupt battery history fails closed without a restored value");
+                }
+            }
+            catch (Exception ex)
+            {
+                failures.Add("battery history store: " + ex.GetType().Name +
+                    " · " + ex.Message);
+            }
+            finally
+            {
+                try
+                {
+                    if (Directory.Exists(directory))
+                        Directory.Delete(directory, true);
+                }
+                catch { }
+            }
+        }
+
         private static void CheckPresentationSemantics(List<string> failures)
         {
             DateTime now = new DateTime(2026, 8, 21, 12, 0, 0,
@@ -1783,6 +1964,8 @@ namespace PeripheralBatteryDashboard.Diagnostics
                     "tray normal and error visuals use different render keys");
                 Check(failures,
                     VisualValueColorArgb(errorVisual) == VisualColorArgb(errorVisual) &&
+                    VisualValueColorArgb(errorVisual) ==
+                        System.Drawing.Color.FromArgb(255, 39, 131, 132).ToArgb() &&
                     VisualValueColorArgb(errorVisual) !=
                         VisualValueColorArgb(normalSamePercent),
                     "tray stale number uses the dimmed battery severity color");
@@ -1799,6 +1982,8 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 Check(failures,
                     VisualValueColorArgb(staleCriticalVisual) ==
                         VisualColorArgb(staleCriticalVisual) &&
+                    VisualValueColorArgb(staleCriticalVisual) ==
+                        System.Drawing.Color.FromArgb(255, 153, 67, 88).ToArgb() &&
                     VisualValueColorArgb(staleCriticalVisual) !=
                         VisualValueColorArgb(freshCriticalVisual),
                     "tray stale critical number keeps danger hue at lower intensity");
@@ -1807,11 +1992,33 @@ namespace PeripheralBatteryDashboard.Diagnostics
                 object errorWithoutValueVisual = createVisual.Invoke(null,
                     new object[] { profile, errorWithoutValue });
                 Check(failures, VisualProperty(errorWithoutValueVisual, "Text") == "—" &&
+                    VisualColorArgb(errorWithoutValueVisual) ==
+                        System.Drawing.Color.FromArgb(255, 120, 137, 160).ToArgb() &&
+                    VisualValueColorArgb(errorWithoutValueVisual) ==
+                        System.Drawing.Color.FromArgb(255, 120, 137, 160).ToArgb() &&
                     VisualBackgroundArgb(errorWithoutValueVisual) ==
                         System.Drawing.Color.FromArgb(255, 17, 27, 46).ToArgb() &&
                     VisualProperty(errorWithoutValueVisual, "AttentionBadge") == "True" &&
                     errorKey != VisualProperty(errorWithoutValueVisual, "RenderKey"),
                     "tray error without last percent uses neutral dash and warning badge");
+
+                BatteryReading expiredCriticalReading = TestReading(
+                    DeviceConnectionState.Error, 8);
+                expiredCriticalReading.IsStale = true;
+                expiredCriticalReading.LastSuccessfulAtUtc = DateTime.UtcNow.AddHours(-25);
+                object expiredCriticalVisual = createVisual.Invoke(null,
+                    new object[] { profile, expiredCriticalReading });
+                Check(failures,
+                    VisualProperty(expiredCriticalVisual, "Text") == "—" &&
+                    VisualProperty(expiredCriticalVisual, "RenderKey").StartsWith(
+                        "resolved|ExpiredStale|Critical|Attention|—|badge:True",
+                        StringComparison.Ordinal) &&
+                    VisualColorArgb(expiredCriticalVisual) ==
+                        System.Drawing.Color.FromArgb(255, 120, 137, 160).ToArgb() &&
+                    VisualValueColorArgb(expiredCriticalVisual) ==
+                        System.Drawing.Color.FromArgb(255, 120, 137, 160).ToArgb() &&
+                    VisualProperty(expiredCriticalVisual, "AttentionBadge") == "True",
+                    "tray expired value uses neutral dash and warning badge");
 
                 object combinedErrorVisual = createCombinedVisual.Invoke(null,
                     new object[] { errorVisual });

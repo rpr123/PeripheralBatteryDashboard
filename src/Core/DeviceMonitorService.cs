@@ -92,6 +92,7 @@ namespace PeripheralBatteryDashboard.Core
         private readonly BatteryReadContext _context;
         private readonly AppSettings _settings;
         private readonly IProviderReadExecutor _providerReadExecutor;
+        private readonly BatteryHistoryStore _historyStore;
         private readonly List<DeviceRuntime> _devices;
         private readonly HashSet<string> _activeIoKeys =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -128,7 +129,7 @@ namespace PeripheralBatteryDashboard.Core
 
         public DeviceMonitorService(IEnumerable<DeviceProfile> profiles,
             ProviderRegistry providers, BatteryReadContext context, AppSettings settings)
-            : this(profiles, providers, context, settings, null,
+            : this(profiles, providers, context, settings, null, null,
                 DefaultLoopDelayMilliseconds,
                 DefaultMinimumWatchdogMilliseconds,
                 DefaultTimeoutMultiplier,
@@ -139,7 +140,20 @@ namespace PeripheralBatteryDashboard.Core
         public DeviceMonitorService(IEnumerable<DeviceProfile> profiles,
             ProviderRegistry providers, BatteryReadContext context, AppSettings settings,
             IProviderReadExecutor providerReadExecutor)
+            : this(profiles, providers, context, settings, providerReadExecutor, null,
+                DefaultLoopDelayMilliseconds,
+                DefaultMinimumWatchdogMilliseconds,
+                DefaultTimeoutMultiplier,
+                DefaultPresenceWatchdogMilliseconds)
+        {
+        }
+
+        public DeviceMonitorService(IEnumerable<DeviceProfile> profiles,
+            ProviderRegistry providers, BatteryReadContext context, AppSettings settings,
+            IProviderReadExecutor providerReadExecutor,
+            BatteryHistoryStore historyStore)
             : this(profiles, providers, context, settings, providerReadExecutor,
+                historyStore,
                 DefaultLoopDelayMilliseconds,
                 DefaultMinimumWatchdogMilliseconds,
                 DefaultTimeoutMultiplier,
@@ -151,7 +165,7 @@ namespace PeripheralBatteryDashboard.Core
             ProviderRegistry providers, BatteryReadContext context, AppSettings settings,
             int loopDelayMilliseconds, int minimumWatchdogMilliseconds,
             int timeoutMultiplier, int presenceWatchdogMilliseconds)
-            : this(profiles, providers, context, settings, null,
+            : this(profiles, providers, context, settings, null, null,
                 loopDelayMilliseconds, minimumWatchdogMilliseconds,
                 timeoutMultiplier, presenceWatchdogMilliseconds)
         {
@@ -162,11 +176,24 @@ namespace PeripheralBatteryDashboard.Core
             IProviderReadExecutor providerReadExecutor,
             int loopDelayMilliseconds, int minimumWatchdogMilliseconds,
             int timeoutMultiplier, int presenceWatchdogMilliseconds)
+            : this(profiles, providers, context, settings, providerReadExecutor, null,
+                loopDelayMilliseconds, minimumWatchdogMilliseconds,
+                timeoutMultiplier, presenceWatchdogMilliseconds)
+        {
+        }
+
+        internal DeviceMonitorService(IEnumerable<DeviceProfile> profiles,
+            ProviderRegistry providers, BatteryReadContext context, AppSettings settings,
+            IProviderReadExecutor providerReadExecutor,
+            BatteryHistoryStore historyStore,
+            int loopDelayMilliseconds, int minimumWatchdogMilliseconds,
+            int timeoutMultiplier, int presenceWatchdogMilliseconds)
         {
             _providers = providers;
             _context = context;
             _settings = settings;
             _providerReadExecutor = providerReadExecutor;
+            _historyStore = historyStore;
             _loopDelayMilliseconds = Math.Max(10, loopDelayMilliseconds);
             _minimumWatchdogMilliseconds = Math.Max(50, minimumWatchdogMilliseconds);
             _timeoutMultiplier = Math.Max(0, timeoutMultiplier);
@@ -176,6 +203,9 @@ namespace PeripheralBatteryDashboard.Core
                 new DeviceRuntime
                 {
                     Profile = p,
+                    LastSuccessfulValue = _historyStore == null
+                        ? null
+                        : _historyStore.GetSnapshot(p),
                     Presence = DevicePresenceState.Unknown,
                     NextPollUtc = DateTime.UtcNow,
                     FailureCount = 0,
@@ -766,6 +796,8 @@ namespace PeripheralBatteryDashboard.Core
             }
             runtime.LastSuccessfulValue = ApplyReadingHistory(
                 runtime.LastSuccessfulValue, reading, presence, observedUtc);
+            if (_historyStore != null)
+                _historyStore.RecordSuccessfulReading(runtime.Profile, reading);
 
             bool connected = reading.Connection == DeviceConnectionState.Connected;
 
@@ -821,7 +853,6 @@ namespace PeripheralBatteryDashboard.Core
             }
             else if (presence == DevicePresenceState.Absent)
             {
-                priorSnapshot = null;
                 ClearBatteryValue(reading);
                 reading.LastSuccessfulAtUtc = null;
             }

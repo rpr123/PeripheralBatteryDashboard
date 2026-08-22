@@ -124,8 +124,9 @@ namespace PeripheralBatteryDashboard
             if (startupLaunch && !settings.StartWithWindows)
                 return 0;
 
+            BatteryHistoryStore batteryHistory = new BatteryHistoryStore();
             DeviceMonitorService monitor = new DeviceMonitorService(profiles, registry,
-                context, settings, new ProviderWorkerClient(baseDirectory));
+                context, settings, new ProviderWorkerClient(baseDirectory), batteryHistory);
             Application application = new Application();
             application.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
@@ -188,6 +189,7 @@ namespace PeripheralBatteryDashboard
                 if (tray != null)
                     tray.Dispose();
                 monitor.Dispose();
+                batteryHistory.Dispose();
             }
         }
 

@@ -156,9 +156,9 @@ README.md, AGENTS.md, CODEX-PROMPTS.md, DEVICE-ADDING.md, Profiles/builtin.devic
 ```text
 이 Windows PC에서 Peripheral Battery Dashboard를 안전하게 제거해 줘. 사용자가 폴더나 레지스트리를 직접 지우도록 넘기지 마라.
 
-먼저 읽기 전용으로 실행 중인 Peripheral Battery Dashboard 프로세스의 정확한 실행 경로, 실제 설치 폴더, `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PeripheralBatteryDashboard` 값, `%LOCALAPPDATA%\PeripheralBatteryDashboard`의 설정과 사용자 프로필 존재 여부를 확인한다. 다른 프로세스나 이름이 비슷한 폴더는 대상으로 삼지 마라.
+먼저 읽기 전용으로 실행 중인 Peripheral Battery Dashboard 프로세스의 정확한 실행 경로, 실제 설치 폴더, `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PeripheralBatteryDashboard` 값, `%LOCALAPPDATA%\PeripheralBatteryDashboard`의 설정·배터리 기록·사용자 프로필 존재 여부를 확인한다. 다른 프로세스나 이름이 비슷한 폴더는 대상으로 삼지 마라.
 
-앱 종료, 자동 실행 값 제거, 설치 폴더 제거, 사용자 설정과 장치 프로필의 보존 또는 삭제를 각각 구분해 정확한 대상과 영향을 보여 줘. 특히 사용자 프로필은 재설치 때 재사용할 수 있으므로 보존할지 삭제할지 묻고, 내 승인을 받은 항목만 변경하라.
+앱 종료, 자동 실행 값 제거, 설치 폴더 제거, 사용자 설정·배터리 기록·장치 프로필의 보존 또는 삭제를 각각 구분해 정확한 대상과 영향을 보여 줘. 특히 사용자 프로필은 재설치 때 재사용할 수 있으므로 보존할지 삭제할지 묻고, 내 승인을 받은 항목만 변경하라.
 
 승인 후 정확한 앱 프로세스를 종료하고 자동 실행 값을 제거한 다음, 승인된 설치 폴더와 사용자 데이터만 제거하라. 완료 후 실행 중인 앱이 없는지, 자동 실행 값이 남지 않았는지, 보존하거나 삭제한 사용자 데이터와 제거하지 않은 항목을 보고하라. 내 요청 없이 저장소, 빌드 도구, 드라이버 또는 관련 없는 파일을 삭제하지 마라.
 ```

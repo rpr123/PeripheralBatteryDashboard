@@ -497,7 +497,7 @@ namespace PeripheralBatteryDashboard.UI
             else
             {
                 text = state.IsPending ? "?" : "—";
-                accent = AvailabilityColor(state.Availability);
+                accent = NeutralAccent;
             }
 
             string key = "resolved|" + state.Freshness + "|" + state.Severity + "|" +
@@ -583,14 +583,6 @@ namespace PeripheralBatteryDashboard.UI
                 case BatterySeverity.Normal: return NormalBatteryAccent;
                 default: return NeutralAccent;
             }
-        }
-
-        private static Color AvailabilityColor(DeviceAvailability availability)
-        {
-            return availability == DeviceAvailability.Attention ||
-                   availability == DeviceAvailability.Inaccessible
-                ? WarningAccent
-                : NeutralAccent;
         }
 
         private static Color BlendWithBackground(Color foreground, double opacity)
