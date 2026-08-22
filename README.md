@@ -30,11 +30,11 @@ Windows에서 동글 또는 Bluetooth로 연결한 주변기기의 배터리 상
 
 저장소: https://github.com/rpr123/PeripheralBatteryDashboard
 
-설치에는 공식 v1.1.3 GitHub Release의
-PeripheralBatteryDashboard-v1.1.3-win-x64.zip과 SHA256SUMS.txt를 사용하라.
+설치에는 공식 v1.1.4 GitHub Release의
+PeripheralBatteryDashboard-v1.1.4-win-x64.zip과 SHA256SUMS.txt를 사용하라.
 GitHub가 자동 생성한 Source code 압축 파일, 기본 브랜치, Actions artifact,
 저장소 트리의 ZIP 또는 제3자 미러를 공식 설치 패키지와 섞지 마라.
-소스 수정이나 빌드가 필요한 경우에만 공식 저장소에서 같은 v1.1.3 태그의 소스를 사용하라.
+소스 수정이나 빌드가 필요한 경우에만 공식 저장소에서 같은 v1.1.4 태그의 소스를 사용하라.
 
 공식 Release 압축본의 README.md에서 공식 배포 경로와 사용자에게 약속된 동작을 확인하라.
 AGENTS.md의 강제 안전·승인·개인정보·구현·검증·게시 규칙은 반드시 따라라.
@@ -107,14 +107,14 @@ CODEX-PROMPTS.md는 목적별 후속 요청문의 참고로 사용하라.
 
 저장소 트리의 ZIP, GitHub Actions artifact, 제3자 미러와 GitHub가 자동 생성하는 `Source code (zip)`·`Source code (tar.gz)`는 공식 설치 패키지가 아닙니다. 아래 링크는 설치 에이전트가 출처와 무결성을 확인하기 위한 것이며, 사용자 수동 설치 절차가 아닙니다.
 
-- 공식 Release: [Peripheral Battery Dashboard v1.1.3](https://github.com/rpr123/PeripheralBatteryDashboard/releases/tag/v1.1.3)
-- Windows x64 패키지: [PeripheralBatteryDashboard-v1.1.3-win-x64.zip](https://github.com/rpr123/PeripheralBatteryDashboard/releases/download/v1.1.3/PeripheralBatteryDashboard-v1.1.3-win-x64.zip)
-- SHA-256 목록: [SHA256SUMS.txt](https://github.com/rpr123/PeripheralBatteryDashboard/releases/download/v1.1.3/SHA256SUMS.txt)
+- 공식 Release: [Peripheral Battery Dashboard v1.1.4](https://github.com/rpr123/PeripheralBatteryDashboard/releases/tag/v1.1.4)
+- Windows x64 패키지: [PeripheralBatteryDashboard-v1.1.4-win-x64.zip](https://github.com/rpr123/PeripheralBatteryDashboard/releases/download/v1.1.4/PeripheralBatteryDashboard-v1.1.4-win-x64.zip)
+- SHA-256 목록: [SHA256SUMS.txt](https://github.com/rpr123/PeripheralBatteryDashboard/releases/download/v1.1.4/SHA256SUMS.txt)
 
-에이전트는 같은 `v1.1.3` Release에서 ZIP과 `SHA256SUMS.txt`를 함께 받은 뒤, 압축 해제나 실행 전에 해시를 계산해 목록의 해당 항목과 비교합니다.
+에이전트는 같은 `v1.1.4` Release에서 ZIP과 `SHA256SUMS.txt`를 함께 받은 뒤, 압축 해제나 실행 전에 해시를 계산해 목록의 해당 항목과 비교합니다.
 
 ```powershell
-Get-FileHash .\PeripheralBatteryDashboard-v1.1.3-win-x64.zip -Algorithm SHA256
+Get-FileHash .\PeripheralBatteryDashboard-v1.1.4-win-x64.zip -Algorithm SHA256
 ```
 
 현재 배포 바이너리는 Authenticode 코드 서명이 되어 있지 않습니다. Windows SmartScreen 또는 백신이 **알 수 없는 게시자** 경고를 표시할 수 있습니다. 에이전트는 경고를 자동으로 우회하지 않고, 공식 출처와 SHA-256 확인 결과를 사용자에게 보여 준 뒤 실행 여부를 별도로 확인합니다.

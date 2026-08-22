@@ -18,8 +18,8 @@ using PeripheralBatteryDashboard.UI;
 [assembly: AssemblyDescription("Windows 주변기기 배터리 상태 대시보드")]
 [assembly: AssemblyCompany("rpr123")]
 [assembly: AssemblyCopyright("Copyright © 2026 rpr123")]
-[assembly: AssemblyVersion("1.1.3.0")]
-[assembly: AssemblyFileVersion("1.1.3.0")]
+[assembly: AssemblyVersion("1.1.4.0")]
+[assembly: AssemblyFileVersion("1.1.4.0")]
 
 namespace PeripheralBatteryDashboard
 {

@@ -2,7 +2,7 @@
 param(
     [string]$InputDirectory = 'dist',
     [string]$OutputDirectory = 'artifacts',
-    [string]$Version = '1.1.3'
+    [string]$Version = '1.1.4'
 )
 
 Set-StrictMode -Version Latest
@@ -42,7 +42,8 @@ $requiredFiles = @(
     'Plugins\SamplePlugin.cs.txt',
     'Profiles\builtin.devices.json',
     'docs\images\dashboard-overview.png',
-    'docs\images\tray-device-icons.png'
+    'docs\images\tray-device-icons.png',
+    'docs\images\status-warning-dot.svg'
 )
 foreach ($name in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $inputRoot $name))) {
